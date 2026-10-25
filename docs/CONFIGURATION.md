@@ -3456,11 +3456,17 @@ Path to a state file for external integrations like Waybar or Polybar. When conf
 **Values written:**
 - `idle` - Ready for input
 - `recording` - Push-to-talk active, capturing audio
-- `transcribing` - Processing audio through Whisper
+- `streaming` - Capturing audio with a streaming engine
+- `transcribing` - Processing the recorded audio
 
 **Special values:**
 - `"auto"` - Uses `$XDG_RUNTIME_DIR/voxtype/state` (default, recommended)
 - `"disabled"` - Turns off state file (also accepts `"none"`, `"off"`, `"false"`)
+
+While the state file is enabled, the daemon also writes `recording.json` and
+`outcome.json` to `$XDG_RUNTIME_DIR/voxtype/` for OSD frontends. See
+[OSD runtime files](#osd-runtime-files). Disabling the state file turns
+those off too.
 
 **Example:**
 ```toml
@@ -3908,7 +3914,7 @@ layout = "compact"    # compact, wide, minimal, tile, orb, custom
 background = "background" # semantic role, literal color, or "none"
 border = "state"          # state, semantic role, literal color, or "none"
 glow = true               # voice-reactive soft glow around the frame
-halo = true               # outline halo, used most visibly by orb recipes
+halo = true               # voice-reactive outline; a soft glow around orb layouts
 
 [[osd.visual.layers]]
 type = "pulse"
@@ -3947,6 +3953,14 @@ On `meter` layers, `color` sets the low-zone color while the mid/high
 gradient stops keep the `warning`/`error` roles; on `shadow` layers,
 `color` tints the backdrop (default black).
 
+`waveform` and `bars` layers place peak levels on a decibel scale: -52 dBFS
+(room noise) is empty and -6 dBFS is full height, and each column shows the
+loudest sample in its slice of history, so syllables and pauses stay
+visible for quiet and loud voices alike. A layer's `gain` multiplies that
+level. While transcribing, these layers show a slow travelling ripple
+instead of the last audio, and `meter` layers drain to empty. `icon` layers
+draw vector icons, so no Nerd Font is needed.
+
 `layout` controls the outer OSD frame. `compact`, `wide`, and `minimal` are
 strip layouts; `tile` is a square card; `orb` is a circular frame intended for
 ring-focused recipes.
@@ -3955,6 +3969,65 @@ ring-focused recipes.
 `background = "none"` or `border = "none"` for frameless recipes; the visual
 layers continue to render normally.
 
+Around the recipe, the built-in Quickshell HUD also shows:
+
+- **Elapsed time** while recording or streaming. In the last stretch before
+  `audio.max_duration_secs` (the final 15 seconds, or the final half of a
+  limit under 30 seconds) it becomes a countdown, amber and then red for the
+  last 5 seconds. Strip layouts also draw a bar along the card's bottom edge
+  that drains toward the limit.
+- **Engine and model** in a small chip for the first couple of seconds of
+  each recording, which confirms a `--model` override or a modifier-selected
+  model.
+- **The result** for a moment after the session ends: a check with the
+  number of characters delivered, "No speech detected", "Nothing
+  transcribed", "Transcription failed", or "Couldn't type the text", with a
+  note when the time limit ended the recording. Cancelled recordings,
+  accidental taps, and `record start --no-osd` sessions show no result.
+
+In strip layouts the clock sits at the right end of the card. In `tile` and
+`orb` layouts the clock, result message, and model chip sit just outside the
+card. The HUD fades and scales in when a recording starts and out when it
+ends. These need a daemon that writes the [OSD runtime files](#osd-runtime-files);
+against an older daemon the HUD shows the recording without them.
+
+### OSD runtime files
+
+The state file holds a single word, and that contract is stable, so the
+daemon publishes extra detail for OSD frontends in sibling files in
+`$XDG_RUNTIME_DIR/voxtype/`. Both are written atomically (to a temporary
+file, then renamed), so a reader never sees a partial file. Both are skipped
+when `state_file = "disabled"`, and a failed write is logged and otherwise
+ignored.
+
+`recording.json` exists from the start of a recording or streaming session
+until the daemon returns to idle:
+
+```json
+{"mode":"recording","started_at_ms":1760000000000,"max_duration_secs":60,"engine":"whisper","model":"base.en"}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | `recording` or `streaming` |
+| `started_at_ms` | Wall-clock start, Unix milliseconds |
+| `max_duration_secs` | The effective recording limit (config, then `VOXTYPE_MAX_DURATION_SECS`, then `--max-duration`) |
+| `engine` | Engine serving this recording, lowercase |
+| `model` | Model serving this recording, after any `--model` override |
+
+`outcome.json` is rewritten each time a session ends:
+
+```json
+{"outcome":"ok","chars":42,"limit_reached":false,"at_ms":1760000004200}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `outcome` | `ok`, `no_speech`, `too_short`, `empty`, `cancelled`, `error`, or `output_failed` |
+| `chars` | Characters delivered; `0` unless `outcome` is `ok` |
+| `limit_reached` | `true` when `max_duration_secs` ended the session rather than the user |
+| `at_ms` | When the session ended, Unix milliseconds; tells a fresh outcome from an old one |
+
 ### Style packages
 
 A style package is a directory containing a `voxtype-osd.toml` manifest,
@@ -3962,7 +4035,13 @@ optional assets under `assets/`, and optionally a QML entry file. A
 manifest-only package recolors and rearranges the built-in renderer; a package
 with a `qml_entry` replaces the renderer entirely. Package QML is trusted
 code and only loads when the package is selected through `style` or
-`plugin_path`. A manifest only overrides the `[osd]` fields it explicitly
+`plugin_path`. The custom item is anchored to fill the OSD window, positions
+itself, and receives each of these properties it declares: `daemonState`,
+`audio` (the shared audio bridge), `theme` (the style loader, with
+`theme.color(role, fallback)` and `theme.config`), `recipe`, `assetRoot`,
+`session` (parsed `recording.json`, or `null`), and `outcome` (parsed
+`outcome.json`, or `null`). They are re-sent when the state, session, or
+outcome changes and when the style reloads. A manifest only overrides the `[osd]` fields it explicitly
 sets: a package that ships only `[colors]` keeps your configured `layout`,
 `[osd.frame]`, and `[[osd.visual.layers]]` recipe, and an explicit `palette`
 in your config always beats the manifest's.

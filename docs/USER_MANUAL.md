@@ -298,6 +298,16 @@ files under `$XDG_RUNTIME_DIR/voxtype/`. The OSD itself does not need a
 keybinding; it activates automatically when the daemon enters the
 recording state.
 
+While you record, the Quickshell HUD shows a live waveform and the elapsed
+time. Near `audio.max_duration_secs` the clock turns into a countdown
+(amber, then red for the last 5 seconds), so a long dictation is not cut off
+by surprise. The engine and model serving the recording appear briefly when
+it starts. While transcribing, the waveform becomes a slow ripple. When the
+session ends, the HUD confirms the result for a moment (a check with the
+number of characters, or "No speech detected", "Transcription failed", and
+so on) before it fades out. Cancelled recordings and `--no-osd` recordings
+show no result.
+
 Quickshell also supports OSD customization through `[osd]`:
 
 ```toml

@@ -1270,8 +1270,34 @@ or a package manifest, restart the daemon (or the OSD) to re-resolve:
 systemctl --user restart voxtype
 ```
 
-Omarchy theme switches are picked up without a restart only if the style file
-is rewritten; re-launching the OSD refreshes the palette.
+Omarchy theme switches are different: when the palette is `omarchy` (the
+default when no package chooses one), the launcher watches the active theme
+and rewrites the style file, and the OSD applies the new colors without a
+restart. If a theme switch doesn't recolor the OSD, check that `palette`
+isn't set to `fallback`, `package`, or `custom`, and restart the daemon if
+the launcher was started before the theme directory existed.
+
+### OSD shows no clock, countdown, or result
+
+The elapsed time, the countdown before `max_duration_secs`, the engine and
+model chip, and the result shown after a session all come from
+`recording.json` and `outcome.json` in `$XDG_RUNTIME_DIR/voxtype/`. They are
+missing when:
+
+- the daemon predates these files (the QML tree was updated but the daemon
+  binary wasn't), or
+- `state_file = "disabled"`, which turns these files off along with the
+  state file.
+
+Check while recording:
+
+```bash
+cat "$XDG_RUNTIME_DIR/voxtype/recording.json"
+cat "$XDG_RUNTIME_DIR/voxtype/outcome.json"   # after a session ends
+```
+
+No result is shown for cancelled recordings, accidental taps, or
+`record start --no-osd` sessions; that is expected.
 
 ---
 
