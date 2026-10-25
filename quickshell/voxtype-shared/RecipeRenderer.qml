@@ -48,12 +48,18 @@ Item {
     /// Animation time in seconds, for host decorations that should move
     /// in step with the layers (e.g. StateIcon's spinner).
     readonly property alias phase: root._phase
+    /// Rotation in degrees for decorations that turn with the voice (the
+    /// aura frame). Integrated on the tick, so a speed change never jumps
+    /// the angle the way `phase * speed` would.
+    readonly property alias spin: root._spin
 
     property real _peak: 0.0
     property real _rms: 0.0
     property real _vad: 0.0
     property real _energy: 0.0
     property real _phase: 0.0
+    property real _spin: 0.0
+    property real _spinSpeed: 0.0
     property real _liveFill: 0.0
     property real _heldFill: 0.0
     property real _lastTick: Date.now()
@@ -62,10 +68,17 @@ Item {
     property int _frame: 0
     property var _barLevels: []
     property var _waveLevels: []
+    // Line strands: amplitude per strand, each eased at its own rate so
+    // the strands drift apart instead of moving in lockstep.
+    property var _lineLevels: [0, 0, 0]
+    // Dot slots, center-out: slot 0 is now, outer slots are slightly older.
+    property var _dotLevels: []
     // Layers sorted by order, cached so the tick doesn't re-sort.
     property var _sortedLayers: []
     property bool _wantsBars: false
     property bool _wantsWave: false
+    property bool _wantsLine: false
+    property bool _wantsDots: false
 
     onStyleChanged: _rebuildLayers()
     Component.onCompleted: _rebuildLayers()
@@ -85,13 +98,19 @@ Item {
         });
         let bars = false;
         let wave = false;
+        let line = false;
+        let dots = false;
         for (let i = 0; i < sorted.length; i++) {
             const kind = sorted[i].type || "waveform";
             if (kind === "bars") bars = true;
             if (kind === "waveform") wave = true;
+            if (kind === "line") line = true;
+            if (kind === "dots") dots = true;
         }
         _wantsBars = bars;
         _wantsWave = wave;
+        _wantsLine = line;
+        _wantsDots = dots;
         _sortedLayers = sorted;
     }
 
@@ -220,6 +239,49 @@ Item {
         return levels[lo] * (1 - mix) + levels[hi] * mix;
     }
 
+    // Loudest of the newest `span` ring samples, `offset` samples back
+    // from the newest one, on the display (decibel) scale.
+    function _recent(offset, span) {
+        const r = _ring();
+        if (!r || r.length === 0) return 0.0;
+        const end = r.length - offset;
+        let loudest = 0.0;
+        for (let i = Math.max(0, end - span); i < Math.max(0, end); i++) {
+            if (r[i] > loudest) loudest = r[i];
+        }
+        return _perceptual(loudest);
+    }
+
+    readonly property int _dotSlots: 3
+
+    function _updateLine(dt) {
+        const live = _live();
+        const working = daemonState === "transcribing";
+        // Recording reads the voice; transcribing holds a calm shimmer.
+        const voice = live ? Math.max(_recent(0, 4), 0.05) : working ? 0.24 : 0.0;
+        const rates = [22.0, 11.0, 6.0];
+        for (let k = 0; k < 3; k++) {
+            const stiffness = voice > _lineLevels[k] ? rates[k] : rates[k] * 0.45;
+            _lineLevels[k] = _approach(_lineLevels[k], voice, stiffness, dt);
+        }
+    }
+
+    function _updateDots(dt) {
+        while (_dotLevels.length < _dotSlots) _dotLevels.push(0.0);
+        const live = _live();
+        const working = daemonState === "transcribing";
+        for (let d = 0; d < _dotSlots; d++) {
+            let target = 0.0;
+            if (live) {
+                // Outer dots show the voice ~70 ms later than inner ones, so
+                // each syllable ripples outward from the center.
+                target = _recent(d * 7, 5);
+            }
+            const stiffness = target > _dotLevels[d] ? 24.0 : 9.0;
+            _dotLevels[d] = _approach(_dotLevels[d], target, stiffness, dt);
+        }
+    }
+
     function _stateLabel() {
         if (daemonState === "streaming") return "Streaming";
         if (daemonState === "transcribing") return "Transcribing";
@@ -247,6 +309,8 @@ Item {
         voiceActivity = 0;
         _barLevels.length = 0;
         _waveLevels.length = 0;
+        _dotLevels.length = 0;
+        _lineLevels = [0, 0, 0];
         _frame++;
     }
 
@@ -283,6 +347,11 @@ Item {
         if (_wantsBars) _updateLevels(_barLevels, 40, 18.0, 6.5, dt);
         // Stiffer than bars so scrolling history trails only ~2 columns.
         if (_wantsWave) _updateLevels(_waveLevels, 96, 30.0, 14.0, dt);
+        if (_wantsLine) _updateLine(dt);
+        if (_wantsDots) _updateDots(dt);
+        const spinTarget = daemonState === "transcribing" ? 150 : 28 + 140 * voiceEnergy;
+        _spinSpeed = _approach(_spinSpeed, spinTarget, 3.0, dt);
+        _spin = (_spin + _spinSpeed * dt) % 360;
         _phase += dt;
         _frame++;
     }
@@ -313,6 +382,8 @@ Item {
                 if (kind === "ring") return ringLayer;
                 if (kind === "icon") return iconLayer;
                 if (kind === "label") return labelLayer;
+                if (kind === "line") return lineLayer;
+                if (kind === "dots") return dotsLayer;
                 return null;
             }
         }
@@ -330,6 +401,19 @@ Item {
         y: _ly <= 1 ? _ly * root.height : _ly
         width: _lw <= 1 ? _lw * root.width : _lw
         height: _lh <= 1 ? _lh * root.height : _lh
+    }
+
+    // Horizontal fill that fades a ribbon out at both ends.
+    component EdgeFade: LinearGradient {
+        id: fade
+        property color tint
+        property real span: 1
+        x1: 0; y1: 0
+        x2: span; y2: 0
+        GradientStop { position: 0.0; color: Qt.alpha(fade.tint, 0) }
+        GradientStop { position: 0.22; color: fade.tint }
+        GradientStop { position: 0.78; color: fade.tint }
+        GradientStop { position: 1.0; color: Qt.alpha(fade.tint, 0) }
     }
 
     // Rounded rect radius clamped the way the old canvas path did.
@@ -589,7 +673,15 @@ Item {
                 anchors.fill: parent
                 preferredRendererType: Shape.CurveRenderer
                 ShapePath {
-                    fillColor: root._alpha(wf.tint, wf.layerOpacity * 0.28)
+                    // Densest along the baseline and fading toward the peaks,
+                    // so the body reads as glow and the outline as the signal.
+                    fillGradient: LinearGradient {
+                        x1: 0; y1: 0
+                        x2: 0; y2: wf.height
+                        GradientStop { position: 0.0; color: root._alpha(wf.tint, wf.layerOpacity * 0.04) }
+                        GradientStop { position: wf.mirror ? 0.5 : 1.0; color: root._alpha(wf.tint, wf.layerOpacity * 0.42) }
+                        GradientStop { position: 1.0; color: root._alpha(wf.tint, wf.layerOpacity * (wf.mirror ? 0.04 : 0.42)) }
+                    }
                     strokeColor: root._alpha(wf.tint, wf.layerOpacity * 0.95)
                     strokeWidth: 1.5
                     joinStyle: ShapePath.RoundJoin
@@ -692,6 +784,155 @@ Item {
                 color: root._color(lb.spec.color || "foreground", "#fcfbf8")
                 opacity: root._num(lb.spec.opacity, 1.0)
                     * root._clamp(0.72 + root._signal(lb.spec) * 0.28, 0.0, 1.0)
+            }
+        }
+    }
+
+    // A flowing voice line: three thin strands that swell with the voice,
+    // pinned to the baseline at both ends. It shows the live level, not
+    // history, so it answers "is it hearing me" at a glance. Each strand is
+    // a filled ribbon so a horizontal gradient can fade its ends.
+    Component {
+        id: lineLayer
+        LayerItem {
+            id: ln
+            readonly property int pts: Math.max(32, Math.min(64, Math.floor(width / 4)))
+            readonly property real gain: root._num(spec.gain, 1.0)
+            readonly property real layerOpacity: root._num(spec.opacity, 1.0)
+            readonly property real speed: root._num(spec.speed, 1.0)
+            readonly property real core: Math.max(1.2, root._num(spec.radius, 2.6))
+            readonly property color tint: root._color(spec.color || "accent", "#66c7ff")
+            readonly property color tint2: root._color(spec.secondary_color || "foreground", "#fcfbf8")
+            readonly property color tint3: Qt.tint(tint, Qt.alpha(tint2, 0.5))
+            // Per strand: cycles across the width, drift speed, amplitude.
+            readonly property var strands: [[1.1, 2.6, 1.0], [1.55, -1.9, 0.8], [2.0, 3.1, 0.6]]
+
+            function ribbon(k, thickness) {
+                root._frame;
+                const n = pts;
+                const st = strands[k];
+                const cy = height / 2;
+                // Square-root response: quiet speech still visibly moves the
+                // line, loud speech doesn't pin it to the edges.
+                const amp = Math.max(1, height / 2 - 2)
+                    * Math.sqrt(root._clamp(root._lineLevels[k] * gain, 0, 1)) * st[2];
+                const working = root.daemonState === "transcribing";
+                const ph = root._phase * st[1] * speed * (working ? 1.6 : 1.0);
+                const xs = new Array(n);
+                const ys = new Array(n);
+                for (let i = 0; i < n; i++) {
+                    const t = i / (n - 1);
+                    const w = Math.pow(Math.sin(Math.PI * t), 2.2);
+                    xs[i] = t * width;
+                    ys[i] = cy + amp * w * (Math.sin(2 * Math.PI * st[0] * t + ph)
+                        + 0.25 * Math.sin(2 * Math.PI * st[0] * 1.6 * t - ph * 1.3)) / 1.25;
+                }
+                const half = thickness / 2;
+                const upper = new Array(n);
+                const lower = new Array(n);
+                for (let i = 0; i < n; i++) {
+                    const a = Math.max(0, i - 1);
+                    const b = Math.min(n - 1, i + 1);
+                    const dx = xs[b] - xs[a];
+                    const dy = ys[b] - ys[a];
+                    const len = Math.max(0.001, Math.sqrt(dx * dx + dy * dy));
+                    const nx = -dy / len * half;
+                    const ny = dx / len * half;
+                    upper[i] = Qt.point(xs[i] + nx, ys[i] - ny);
+                    lower[n - 1 - i] = Qt.point(xs[i] - nx, ys[i] + ny);
+                }
+                return upper.concat(lower, [upper[0]]);
+            }
+
+            readonly property var glowPath: ribbon(0, core * 3.5)
+            readonly property var path0: ribbon(0, core)
+            readonly property var path1: ribbon(1, core * 0.7)
+            readonly property var path2: ribbon(2, core * 0.6)
+
+            // The glow is soft and faint, so it skips the curve renderer's
+            // antialiasing, which is the costly part of redrawing a path.
+            Shape {
+                anchors.fill: parent
+                opacity: ln.layerOpacity
+                preferredRendererType: Shape.GeometryRenderer
+                ShapePath {
+                    strokeColor: "transparent"
+                    fillGradient: EdgeFade { span: ln.width; tint: root._alpha(ln.tint, 0.2) }
+                    PathPolyline { path: ln.glowPath }
+                }
+            }
+
+            Shape {
+                anchors.fill: parent
+                opacity: ln.layerOpacity
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeColor: "transparent"
+                    fillGradient: EdgeFade { span: ln.width; tint: root._alpha(ln.tint3, 0.55) }
+                    PathPolyline { path: ln.path2 }
+                }
+                ShapePath {
+                    strokeColor: "transparent"
+                    fillGradient: EdgeFade { span: ln.width; tint: root._alpha(ln.tint2, 0.7) }
+                    PathPolyline { path: ln.path1 }
+                }
+                ShapePath {
+                    strokeColor: "transparent"
+                    fillGradient: EdgeFade { span: ln.width; tint: ln.tint }
+                    PathPolyline { path: ln.path0 }
+                }
+            }
+        }
+    }
+
+    // Voice-assistant dots: a short row of round dots that stretch into
+    // capsules with the voice. The center dot is now; each step out is a
+    // few tens of ms older, so syllables ripple outward. Transcribing turns
+    // them into a travelling bounce.
+    Component {
+        id: dotsLayer
+        LayerItem {
+            id: dt
+            readonly property real gain: root._num(spec.gain, 1.0)
+            readonly property real layerOpacity: root._num(spec.opacity, 1.0)
+            readonly property real dotW: root._clamp(root._num(spec.radius, height * 0.3), 3, Math.max(3, height))
+            readonly property int count: {
+                let n = Math.floor(width / (dotW * 2.0));
+                n = Math.max(3, Math.min(root._dotSlots * 2 - 1, n));
+                return n % 2 === 0 ? n - 1 : n;
+            }
+            readonly property real spacing: dotW * 0.85
+            readonly property real x0: (width - (count * dotW + (count - 1) * spacing)) / 2
+            readonly property color tint: root._color(spec.color || "accent", "#66c7ff")
+            readonly property color tint2: root._color(spec.secondary_color || spec.color || "accent", "#66c7ff")
+
+            Repeater {
+                model: dt.count
+                delegate: Rectangle {
+                    id: dot
+                    required property int index
+                    readonly property int dist: Math.abs(index - (dt.count - 1) / 2)
+                    readonly property real level: {
+                        root._frame;
+                        if (root.daemonState === "transcribing") {
+                            const wave = Math.max(0, Math.sin(root._phase * 5.0 - index * 0.75));
+                            return 0.42 * wave * wave * wave;
+                        }
+                        const v = root._dotLevels.length > dist ? root._dotLevels[dist] : 0;
+                        // A faint ripple while listening keeps silence from
+                        // looking frozen.
+                        const idle = root._live()
+                            ? 0.05 * (0.5 + 0.5 * Math.sin(root._phase * 2.2 - dist * 0.9)) : 0;
+                        return root._clamp(Math.max(v * dt.gain * (1 - dist * 0.1), idle), 0, 1);
+                    }
+                    x: dt.x0 + index * (dt.dotW + dt.spacing)
+                    width: dt.dotW
+                    height: dt.dotW + (dt.height - dt.dotW) * level
+                    y: (dt.height - height) / 2
+                    radius: dt.dotW / 2
+                    color: dist === 0 ? dt.tint : Qt.tint(dt.tint, Qt.alpha(dt.tint2, Math.min(1, dist * 0.35)))
+                    opacity: dt.layerOpacity * (0.62 + 0.38 * Math.min(1, level * 2.5))
+                }
             }
         }
     }

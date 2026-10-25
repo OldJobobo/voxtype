@@ -347,7 +347,10 @@ are plain `[osd]` config presets rather than installable packages. Apply one
 with `voxtype setup osd --recipe <name>`, which writes its keys into your
 config without duplicating any that are already there and prints each
 changed key with its previous value; `--dry-run` previews the change and
-`voxtype setup osd --list` shows what's installed. Recipes resolve against
+`voxtype setup osd --list` shows what's installed. For a quiet HUD, the
+`capsule`, `aura`, and `halo` recipes show only the state, your live voice
+level, and the clock; the `showcase-*` recipes layer more instruments.
+Recipes resolve against
 `~/.config/voxtype/osd-recipes/`, `~/.local/share/voxtype/osd-recipes/`, and
 `/usr/share/voxtype/osd-recipes/`, and `--recipe` also accepts a path to a
 `.toml` file. While developing a package, set

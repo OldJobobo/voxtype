@@ -41,8 +41,22 @@ printf idle > "$XDG_RUNTIME_DIR/voxtype/state"
 
 ## Recipes
 
+Minimal styles, which show only the state, the live voice level, and the
+clock:
+
+- `capsule.toml`: a small dark pill with one flowing voice line.
+- `aura.toml`: a pill with an animated gradient edge (`border = "aura"`) and
+  voice-assistant dots.
+- `halo.toml`: a round badge with an aura edge and a voice line across it.
+
+Showcases, which layer more instruments:
+
 - `showcase-bars.toml`: wide, readable level bars over a visible host background.
 - `showcase-orbit.toml`: compact shadow/pulse/ring style for a more animated meter.
-- `showcase-prism-scope.toml`: square scope-style panel with ring, waveform,
-  bars, and a meter rail.
-- `showcase-signal-stack.toml`: layered waveform plus meter over a visible host background.
+- `showcase-prism-scope.toml`: square scope-style panel: a ring around the
+  state icon, history bars, and a meter rail.
+- `showcase-signal-stack.toml`: a scrolling waveform plus meter over a visible
+  host background.
+
+The pill layout, the `line` and `dots` layers, and the aura border need
+a voxtype release newer than 1.1.1. Older daemons reject these recipes.

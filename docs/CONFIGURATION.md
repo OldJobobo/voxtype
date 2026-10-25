@@ -3905,14 +3905,14 @@ voxtype config schema          # lists every settable key
 frontend = "quickshell"
 style = "default"      # Built-in style, package name, or package path
 # palette = "omarchy" # omit for auto, or use omarchy, fallback, package, custom
-layout = "compact"    # compact, wide, minimal, tile, orb, custom
+layout = "compact"    # compact, wide, minimal, pill, tile, orb, custom
 
 # Explicit trusted package path. Custom QML is not sandboxed.
 # plugin_path = "~/.config/voxtype/osd/my-style"
 
 [osd.frame]
 background = "background" # semantic role, literal color, or "none"
-border = "state"          # state, semantic role, literal color, or "none"
+border = "state"          # state, aura, semantic role, literal color, or "none"
 glow = true               # voice-reactive soft glow around the frame
 halo = true               # voice-reactive outline; a soft glow around orb layouts
 
@@ -3945,8 +3945,8 @@ watches the active theme and rewrites the resolved style, and the OSD picks up
 the new colors immediately without a restart. The GTK4 frontend reads the
 theme at startup, so it picks up a new theme the next time the OSD starts.
 
-Recipe layer `type` can be `shadow`, `background`, `waveform`, `bars`,
-`pulse`, `ring`, `meter`, `icon`, or `label`. Layer `source` can be `peak`,
+Recipe layer `type` can be `shadow`, `background`, `waveform`, `line`,
+`bars`, `dots`, `pulse`, `ring`, `meter`, `icon`, or `label`. Layer `source` can be `peak`,
 `rms`, `vad`, `state`, or `none`. Layer tunables you don't set use each
 layer type's own defaults; explicit values, including `0.0`, are honored.
 On `meter` layers, `color` sets the low-zone color while the mid/high
@@ -3961,13 +3961,31 @@ level. While transcribing, these layers show a slow travelling ripple
 instead of the last audio, and `meter` layers drain to empty. `icon` layers
 draw vector icons, so no Nerd Font is needed.
 
-`layout` controls the outer OSD frame. `compact`, `wide`, and `minimal` are
-strip layouts; `tile` is a square card; `orb` is a circular frame intended for
-ring-focused recipes.
+`line` and `dots` layers show the live level rather than history. A `line`
+layer draws three thin strands, in `color`, `secondary_color`, and a blend
+of the two, that swell with your voice and drift apart, pinned to the
+baseline at both ends; `radius` sets the strand thickness. A `dots` layer
+draws a short row of round dots that stretch into capsules as you speak.
+The center dot shows the current level and the outer dots lag slightly
+behind, so each syllable ripples outward. While transcribing, the line
+shimmers and the dots bounce in turn.
+
+`layout` controls the outer OSD frame. `compact`, `wide`, `minimal`, and
+`pill` are strip layouts; `pill` is a short capsule with fully rounded ends.
+`tile` is a square card; `orb` is a circular frame intended for ring-focused
+recipes.
 
 `[osd.frame]` controls the host frame around the recipe. Set
 `background = "none"` or `border = "none"` for frameless recipes; the visual
-layers continue to render normally.
+layers continue to render normally. `border = "aura"` draws a gradient edge
+in the theme's accent and state colors, with a soft glow, that turns slowly
+while listening, speeds up and brightens with your voice, and spins while
+transcribing.
+
+The shipped recipes include three minimal styles built on these: `capsule`
+(a pill with a voice line), `aura` (a pill with an aura edge and dots), and
+`halo` (a round badge with an aura edge and a voice line). Apply one with
+`voxtype setup osd --recipe capsule`.
 
 Around the recipe, the built-in Quickshell HUD also shows:
 

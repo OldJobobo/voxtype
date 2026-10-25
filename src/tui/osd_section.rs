@@ -102,7 +102,9 @@ const TABLE: &str = "osd";
 
 const FRONTEND_CHOICES: &[&str] = &["gtk4", "native", "quickshell"];
 const PALETTE_CHOICES: &[&str] = &["auto", "omarchy", "fallback", "package", "custom"];
-const LAYOUT_CHOICES: &[&str] = &["compact", "wide", "minimal", "tile", "orb", "custom"];
+const LAYOUT_CHOICES: &[&str] = &[
+    "compact", "wide", "minimal", "pill", "tile", "orb", "custom",
+];
 const POSITION_CHOICES: &[&str] = &[
     "bottom-center",
     "top-center",

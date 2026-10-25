@@ -290,8 +290,10 @@ PanelWindow {
 
     function _frameBorderWidth() {
         const value = _frameValue("border", "state");
-        return value === "none" || value === "transparent" ? 0 : 2;
+        return value === "none" || value === "transparent" || value === "aura" ? 0 : 2;
     }
+
+    readonly property bool _auraFrame: _frameValue("border", "state") === "aura"
 
     function _frameGlowEnabled() {
         const frame = _frameConfig();
@@ -307,6 +309,7 @@ PanelWindow {
         const layout = _styleLayout();
         if (layout === "wide") return Math.max(VT.Theme.defaultWidthPx, 560);
         if (layout === "minimal") return Math.min(VT.Theme.defaultWidthPx, 260);
+        if (layout === "pill") return Math.max(240, Math.min(VT.Theme.defaultWidthPx, 320));
         if (layout === "tile") return 176;
         if (layout === "orb") return 168;
         return VT.Theme.defaultWidthPx;
@@ -315,6 +318,7 @@ PanelWindow {
     function _cardHeight() {
         const layout = _styleLayout();
         if (layout === "minimal") return 48;
+        if (layout === "pill") return 52;
         if (layout === "tile") return 176;
         if (layout === "orb") return 168;
         return 72;
@@ -323,6 +327,7 @@ PanelWindow {
     function _cardRadius() {
         const layout = _styleLayout();
         if (layout === "orb") return Math.round(_cardWidth() / 2);
+        if (layout === "pill") return _cardHeight() / 2;
         if (layout === "tile") return 18;
         return VT.Theme.cornerRadius;
     }
@@ -349,6 +354,13 @@ PanelWindow {
     /// Whether text outside the card goes below it: below unless the card
     /// sits near the bottom edge, where it would fall off the screen.
     readonly property bool _outsideBelow: _cardY() + _cardHeight() + 60 < height
+
+    /// Horizontal inset of the strip content (icon, renderer, clock). The
+    /// pill's round ends need more room than a rounded rectangle's corners.
+    function _contentInset() {
+        if (_isBlockLayout()) return 0;
+        return _styleLayout() === "pill" ? 20 : VT.Theme.padding;
+    }
 
     function _isBlockLayout() {
         const layout = _styleLayout();
@@ -699,8 +711,8 @@ PanelWindow {
 
             Row {
                 anchors.fill: parent
-                anchors.leftMargin: panel._isBlockLayout() ? 0 : VT.Theme.padding
-                anchors.rightMargin: panel._isBlockLayout() ? 0 : VT.Theme.padding
+                anchors.leftMargin: panel._contentInset()
+                anchors.rightMargin: panel._contentInset()
                 spacing: 10
 
                 // Lifted toward the foreground: some theme palettes map the
@@ -720,7 +732,7 @@ PanelWindow {
                 Column {
                     width: panel._isBlockLayout()
                         ? card.width
-                        : card.width - 28 - 2 * VT.Theme.padding - 10
+                        : card.width - 28 - 2 * panel._contentInset() - 10
                             - (stripClock.visible ? stripClock.width + 10 : 0)
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4
@@ -729,7 +741,9 @@ PanelWindow {
                         width: parent.width
                         height: panel._isBlockLayout()
                             ? card.height
-                            : Math.max(24, card.height - 2 * VT.Theme.padding)
+                            : panel._styleLayout() === "pill"
+                                ? card.height - 16
+                                : Math.max(24, card.height - 2 * VT.Theme.padding)
 
                         VT.RecipeRenderer {
                             id: recipeRenderer
@@ -791,6 +805,88 @@ PanelWindow {
                 width: (card.width - 2 * card.radius)
                     * Math.min(1, panel.remainingSecs / Math.max(1, Math.min(15, panel.limitSecs / 2)))
                 color: panel.clockColor
+            }
+        }
+
+        // Aura frame (`border = "aura"`): a gradient edge in the theme's
+        // state colors that turns slowly and quickens and brightens with
+        // the voice, over a blurred copy of itself for the glow. The angle
+        // comes from the renderer's tick, so it never runs a free animation.
+        Item {
+            id: aura
+            visible: !panel.customActive && panel._auraFrame
+            x: card.x
+            y: card.y
+            width: card.width
+            height: card.height
+            opacity: panel.shownState === "idle" ? 0.0 : 1.0
+            Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+            readonly property real pad: 18
+            readonly property real energy: panel.flashing ? 0.6 : recipeRenderer.voiceEnergy
+
+            ConicalGradient {
+                id: auraGradient
+                centerX: aura.pad + aura.width / 2
+                centerY: aura.pad + aura.height / 2
+                angle: recipeRenderer.spin
+                GradientStop { position: 0.0; color: panel.flashing ? panel.flashColor : panel._styleColor("accent", panel.stateColor) }
+                GradientStop { position: 0.3; color: panel.flashing ? panel.flashColor : panel._styleColor("recording", panel.stateColor) }
+                GradientStop { position: 0.62; color: panel.flashing ? panel.flashColor : panel._styleColor("transcribing", panel.stateColor) }
+                GradientStop { position: 1.0; color: panel.flashing ? panel.flashColor : panel._styleColor("accent", panel.stateColor) }
+            }
+
+            component AuraRing: Shape {
+                id: ringShape
+                property real thickness: 2
+                x: -aura.pad
+                y: -aura.pad
+                width: aura.width + 2 * aura.pad
+                height: aura.height + 2 * aura.pad
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeColor: "transparent"
+                    fillRule: ShapePath.OddEvenFill
+                    fillGradient: auraGradient
+                    PathRectangle {
+                        x: aura.pad
+                        y: aura.pad
+                        width: aura.width
+                        height: aura.height
+                        radius: card.radius
+                    }
+                    PathRectangle {
+                        x: aura.pad + ringShape.thickness
+                        y: aura.pad + ringShape.thickness
+                        width: aura.width - 2 * ringShape.thickness
+                        height: aura.height - 2 * ringShape.thickness
+                        radius: Math.max(0, card.radius - ringShape.thickness)
+                    }
+                }
+            }
+
+            AuraRing {
+                id: auraGlowSource
+                visible: false
+                thickness: 5
+            }
+
+            MultiEffect {
+                source: auraGlowSource
+                x: auraGlowSource.x
+                y: auraGlowSource.y
+                width: auraGlowSource.width
+                height: auraGlowSource.height
+                blurEnabled: true
+                blur: 1.0
+                blurMax: 32
+                blurMultiplier: 0.5
+                brightness: 0.15
+                opacity: 0.5 + 0.5 * aura.energy
+            }
+
+            AuraRing {
+                thickness: 1.5 + aura.energy
+                opacity: 0.7 + 0.3 * aura.energy
             }
         }
 

@@ -85,6 +85,7 @@ pub enum OsdLayout {
     Minimal,
     Tile,
     Orb,
+    Pill,
     Custom,
 }
 
@@ -101,6 +102,8 @@ pub enum OsdLayerKind {
     Meter,
     Icon,
     Label,
+    Line,
+    Dots,
 }
 
 /// One declarative visual layer in the Quickshell renderer.
@@ -495,6 +498,50 @@ mod tests {
         assert_eq!(v.layers[0].kind, OsdLayerKind::Shadow);
         assert_eq!(v.layers[0].source, "peak");
         assert!((v.layers[0].opacity.unwrap() - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn visual_layer_accepts_line_and_dots_kinds() {
+        let toml_src = r#"
+            [[layers]]
+            type = "line"
+            [[layers]]
+            type = "dots"
+        "#;
+        let v: OsdVisualConfig = toml::from_str(toml_src).unwrap();
+        assert_eq!(v.layers[0].kind, OsdLayerKind::Line);
+        assert_eq!(v.layers[1].kind, OsdLayerKind::Dots);
+        let json = serde_json::to_value(&v.layers[0]).unwrap();
+        assert_eq!(json["type"], "line");
+    }
+
+    #[test]
+    fn shipped_recipes_parse() {
+        #[derive(Deserialize)]
+        struct Recipe {
+            osd: OsdConfig,
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/osd-recipes");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let recipe: Recipe = toml::from_str(&text)
+                .unwrap_or_else(|e| panic!("{} does not parse: {e}", path.display()));
+            assert!(
+                !recipe.osd.visual.layers.is_empty(),
+                "{} has no layers",
+                path.display()
+            );
+            seen += 1;
+        }
+        assert!(seen >= 7, "expected the shipped recipes, found {seen}");
+        let pill: Recipe =
+            toml::from_str(&std::fs::read_to_string(dir.join("capsule.toml")).unwrap()).unwrap();
+        assert_eq!(pill.osd.layout, OsdLayout::Pill);
     }
 
     #[test]
