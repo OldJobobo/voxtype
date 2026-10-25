@@ -86,6 +86,8 @@ pub enum OsdLayout {
     Tile,
     Orb,
     Pill,
+    /// Compact voice strip with Omarchy Shell chrome and live rounding.
+    Shell,
     Custom,
 }
 
@@ -538,10 +540,30 @@ mod tests {
             );
             seen += 1;
         }
-        assert!(seen >= 7, "expected the shipped recipes, found {seen}");
+        assert!(seen >= 8, "expected the shipped recipes, found {seen}");
         let pill: Recipe =
             toml::from_str(&std::fs::read_to_string(dir.join("capsule.toml")).unwrap()).unwrap();
         assert_eq!(pill.osd.layout, OsdLayout::Pill);
+    }
+
+    #[test]
+    fn shell_line_keeps_capsule_voice_layers_without_its_pill_frame() {
+        #[derive(Deserialize)]
+        struct Recipe {
+            osd: OsdConfig,
+        }
+        let shell: Recipe =
+            toml::from_str(include_str!("../../examples/osd-recipes/shell-line.toml")).unwrap();
+        let capsule: Recipe =
+            toml::from_str(include_str!("../../examples/osd-recipes/capsule.toml")).unwrap();
+        assert_eq!(shell.osd.layout, OsdLayout::Shell);
+        assert_eq!(shell.osd.palette, Some(OsdPaletteSource::Omarchy));
+        assert!(!shell.osd.frame.glow);
+        assert!(!shell.osd.frame.halo);
+        assert_eq!(
+            serde_json::to_value(shell.osd.visual).unwrap(),
+            serde_json::to_value(capsule.osd.visual).unwrap(),
+        );
     }
 
     #[test]

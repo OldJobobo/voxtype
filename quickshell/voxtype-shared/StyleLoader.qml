@@ -13,6 +13,11 @@ QtObject {
 
     property string styleFile: Quickshell.env("VOXTYPE_OSD_STYLE_FILE") || ""
     property var config: _defaultConfig()
+    readonly property real shellCornerRadius: _shellMetrics.cornerRadius
+
+    property ShellMetrics _shellMetrics: ShellMetrics {
+        enabled: root.config && root.config.layout === "shell"
+    }
 
     // Degraded-path fallback used only when VOXTYPE_OSD_STYLE_FILE is
     // missing or invalid. Mirrors the Rust defaults; keep in sync with

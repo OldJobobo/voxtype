@@ -15,8 +15,8 @@ use crate::osd::config::{
     OsdConfig, OsdFrameConfig, OsdLayout, OsdPackageManifest, OsdPaletteSource, OsdPosition,
     OsdVisualConfig,
 };
-use crate::osd::theme;
 use crate::osd::visual::{Color, Palette};
+use crate::osd::{shell_style, theme};
 
 const PACKAGE_MANIFEST: &str = "voxtype-osd.toml";
 /// System-wide package directory populated by distro packages; user paths
@@ -38,6 +38,9 @@ pub struct RuntimeOsdStyle {
     pub colors: BTreeMap<String, String>,
     pub frame: OsdFrameConfig,
     pub visual: OsdVisualConfig,
+    /// Only the opt-in shell layout reads Omarchy's popup tokens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<shell_style::ShellStyle>,
 }
 
 /// Resolve an OSD style from config and optional CLI/env override.
@@ -100,6 +103,8 @@ pub fn resolve_runtime_style(
         }
     }
 
+    let shell = (layout == OsdLayout::Shell).then(|| shell_style::load(&colors));
+
     Ok(RuntimeOsdStyle {
         style: style_name,
         palette: palette_source,
@@ -113,6 +118,7 @@ pub fn resolve_runtime_style(
         colors,
         frame,
         visual,
+        shell,
     })
 }
 
@@ -166,7 +172,18 @@ where
     if style.palette != OsdPaletteSource::Omarchy {
         return None;
     }
-    theme::watch_current_theme(on_change)
+    if style.layout == OsdLayout::Shell {
+        let mut dirs = theme::omarchy_current_dirs();
+        if let Some(home) = dirs::home_dir() {
+            let overrides = home.join(".config/omarchy");
+            if overrides.is_dir() {
+                dirs.push(overrides);
+            }
+        }
+        theme::watch_omarchy_dirs(dirs, theme::THEME_DEBOUNCE, on_change)
+    } else {
+        theme::watch_current_theme(on_change)
+    }
 }
 
 /// Atomic write: the Quickshell FileView reloads this file on change, so a
@@ -449,6 +466,8 @@ mod tests {
         assert!(style.package_dir.is_none());
         assert!(style.custom_qml.is_none());
         assert!(style.colors.contains_key("accent"));
+        assert!(style.shell.is_none());
+        assert!(serde_json::to_value(&style).unwrap().get("shell").is_none());
     }
 
     #[test]
@@ -473,6 +492,47 @@ mod tests {
             color_to_css(palette.foreground.with_alpha(0.96))
         );
         assert_eq!(colors["amber"], colors["warning"]);
+    }
+
+    #[test]
+    fn shell_layout_resolves_chrome_without_replacing_the_recipe() {
+        let cfg = OsdConfig {
+            layout: OsdLayout::Shell,
+            ..OsdConfig::default()
+        };
+        let style = resolve_runtime_style(&cfg, None).unwrap();
+        assert!(style.shell.is_some());
+        assert_eq!(style.visual.layers.len(), cfg.visual.layers.len());
+        assert!(serde_json::to_value(&style).unwrap()["shell"]["border_colors"].is_array());
+    }
+
+    #[test]
+    fn shell_line_package_matches_the_recipe() {
+        #[derive(serde::Deserialize)]
+        struct Recipe {
+            osd: OsdConfig,
+        }
+        let recipe: Recipe =
+            toml::from_str(include_str!("../../examples/osd-recipes/shell-line.toml")).unwrap();
+        let package =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/osd-packages/shell-line");
+        let cfg = OsdConfig {
+            plugin_path: Some(package),
+            ..OsdConfig::default()
+        };
+        let style = resolve_runtime_style(&cfg, None).unwrap();
+        assert_eq!(style.layout, recipe.osd.layout);
+        assert_eq!(style.palette, OsdPaletteSource::Omarchy);
+        assert!(style.shell.is_some());
+        assert!(style.custom_qml.is_none());
+        assert_eq!(
+            serde_json::to_value(style.frame).unwrap(),
+            serde_json::to_value(recipe.osd.frame).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(style.visual).unwrap(),
+            serde_json::to_value(recipe.osd.visual).unwrap()
+        );
     }
 
     #[test]

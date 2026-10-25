@@ -243,6 +243,23 @@ PanelWindow {
             : "compact";
     }
 
+    readonly property bool shellLayout: _styleLayout() === "shell"
+    readonly property var shellChrome: style && style.config ? style.config.shell : null
+    readonly property real shellScale: Math.max(0.5, Math.min(3, _shellNumber("spacing_scale", 1)))
+    readonly property real shellFontSize: _shellNumber("font_size", 12)
+    readonly property string textFamily: shellLayout ? "monospace" : Qt.application.font.family
+    readonly property real stripGap: shellLayout ? 16 * shellScale : 10
+    readonly property real stripIconWidth: shellLayout ? 28 * shellScale : 28
+
+    function _shellNumber(key, fallback) {
+        const value = shellChrome && shellChrome[key] !== undefined ? Number(shellChrome[key]) : fallback;
+        return isFinite(value) && value >= 0 ? value : fallback;
+    }
+
+    function _foregroundColor() {
+        return panel._styleColor(shellLayout && shellChrome ? shellChrome.text : "foreground", VT.Theme.textColor);
+    }
+
     function _stylePosition() {
         return style && style.config && style.config.position
             ? String(style.config.position)
@@ -278,7 +295,8 @@ PanelWindow {
     function _frameBackgroundColor() {
         const value = _frameValue("background", "background");
         if (value === "none" || value === "transparent") return "transparent";
-        return panel._styleColor(value, VT.Theme.bgColor);
+        const tint = panel._styleColor(value, VT.Theme.bgColor);
+        return shellLayout ? Qt.alpha(tint, 0.97) : tint;
     }
 
     function _frameBorderColor() {
@@ -290,7 +308,7 @@ PanelWindow {
 
     function _frameBorderWidth() {
         const value = _frameValue("border", "state");
-        return value === "none" || value === "transparent" || value === "aura" ? 0 : 2;
+        return shellLayout || value === "none" || value === "transparent" || value === "aura" ? 0 : 2;
     }
 
     readonly property bool _auraFrame: _frameValue("border", "state") === "aura"
@@ -310,6 +328,7 @@ PanelWindow {
         if (layout === "wide") return Math.max(VT.Theme.defaultWidthPx, 560);
         if (layout === "minimal") return Math.min(VT.Theme.defaultWidthPx, 260);
         if (layout === "pill") return Math.max(240, Math.min(VT.Theme.defaultWidthPx, 320));
+        if (layout === "shell") return 320 * shellScale;
         if (layout === "tile") return 176;
         if (layout === "orb") return 168;
         return VT.Theme.defaultWidthPx;
@@ -319,6 +338,7 @@ PanelWindow {
         const layout = _styleLayout();
         if (layout === "minimal") return 48;
         if (layout === "pill") return 52;
+        if (layout === "shell") return 60 * shellScale + 2 * _shellNumber("border_width", 2);
         if (layout === "tile") return 176;
         if (layout === "orb") return 168;
         return 72;
@@ -328,6 +348,8 @@ PanelWindow {
         const layout = _styleLayout();
         if (layout === "orb") return Math.round(_cardWidth() / 2);
         if (layout === "pill") return _cardHeight() / 2;
+        if (layout === "shell") return style && style.shellCornerRadius !== undefined
+            ? Math.min(style.shellCornerRadius, _cardWidth() / 2, _cardHeight() / 2) : 0;
         if (layout === "tile") return 18;
         return VT.Theme.cornerRadius;
     }
@@ -359,6 +381,7 @@ PanelWindow {
     /// pill's round ends need more room than a rounded rectangle's corners.
     function _contentInset() {
         if (_isBlockLayout()) return 0;
+        if (shellLayout) return 16 * shellScale + _shellNumber("border_width", 2);
         return _styleLayout() === "pill" ? 20 : VT.Theme.padding;
     }
 
@@ -706,34 +729,56 @@ PanelWindow {
             // Behavior here would animate on every VAD flip, several times a
             // second, and keep the window redrawing at the display's full
             // refresh rate.
-            opacity: (panel.recordingVisual && panel.audio && panel.audio.running)
+            opacity: !panel.shellLayout && (panel.recordingVisual && panel.audio && panel.audio.running)
                      ? 0.78 + 0.22 * recipeRenderer.voiceActivity : 1.0
+
+            Loader {
+                anchors.fill: parent
+                active: panel.shellLayout
+                sourceComponent: Component {
+                    VT.ShellBorder {
+                        visible: thickness > 0
+                            && panel._frameValue("border", "accent") !== "none"
+                            && panel._frameValue("border", "accent") !== "transparent"
+                            && panel._frameValue("border", "accent") !== "aura"
+                        cornerRadius: card.radius
+                        thickness: panel._shellNumber("border_width", 2)
+                        angle: panel._shellNumber("border_angle", 0)
+                        opacity: panel._shellNumber("border_alpha", 1)
+                        colors: {
+                            const configured = panel.shellChrome ? panel.shellChrome.border_colors : null;
+                            const stops = configured && configured.length > 0 ? configured : ["accent"];
+                            return stops.map(function(c) { return panel._styleColor(c, panel.stateColor); });
+                        }
+                    }
+                }
+            }
 
             Row {
                 anchors.fill: parent
                 anchors.leftMargin: panel._contentInset()
                 anchors.rightMargin: panel._contentInset()
-                spacing: 10
+                spacing: panel.stripGap
 
                 // Lifted toward the foreground: some theme palettes map the
                 // state roles to dark, low-contrast colors.
                 VT.StateIcon {
                     visible: !panel._isBlockLayout()
-                    width: 28
-                    height: 22
+                    width: panel.stripIconWidth
+                    height: panel.shellLayout ? 22 * panel.shellScale : 22
                     anchors.verticalCenter: parent.verticalCenter
                     daemonState: panel.shownState
                     result: panel.flashIcon
                     phase: recipeRenderer.phase
                     color: Qt.tint(panel.flashing ? panel.flashColor : panel.stateColor,
-                                   Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), panel.flashing ? 0.2 : 0.5))
+                                   Qt.alpha(panel._foregroundColor(), panel.flashing ? 0.2 : 0.5))
                 }
 
                 Column {
                     width: panel._isBlockLayout()
                         ? card.width
-                        : card.width - 28 - 2 * panel._contentInset() - 10
-                            - (stripClock.visible ? stripClock.width + 10 : 0)
+                        : card.width - panel.stripIconWidth - 2 * panel._contentInset() - panel.stripGap
+                            - (stripClock.visible ? stripClock.width + panel.stripGap : 0)
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4
 
@@ -741,6 +786,8 @@ PanelWindow {
                         width: parent.width
                         height: panel._isBlockLayout()
                             ? card.height
+                            : panel.shellLayout
+                                ? card.height - 2 * panel._contentInset()
                             : panel._styleLayout() === "pill"
                                 ? card.height - 16
                                 : Math.max(24, card.height - 2 * VT.Theme.padding)
@@ -770,9 +817,10 @@ PanelWindow {
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: panel.flashText
-                            font.pixelSize: 15
+                            font.family: panel.textFamily
+                            font.pixelSize: panel.shellLayout ? panel.shellFontSize * 1.167 : 15
                             font.weight: Font.Medium
-                            color: panel._styleColor("foreground", VT.Theme.textColor)
+                            color: panel._foregroundColor()
                         }
                     }
                 }
@@ -780,13 +828,14 @@ PanelWindow {
                 Text {
                     id: stripClock
                     visible: !panel._isBlockLayout() && panel.session !== null
-                    width: 38
+                    width: panel.shellLayout ? 38 * Math.max(panel.shellScale, panel.shellFontSize / 12) : 38
                     anchors.verticalCenter: parent.verticalCenter
                     horizontalAlignment: Text.AlignRight
                     opacity: panel._sessionLive ? 1.0 : 0.0
                     Behavior on opacity { NumberAnimation { duration: 140 } }
                     text: panel.clockText
-                    font.pixelSize: 13
+                    font.family: panel.textFamily
+                    font.pixelSize: panel.shellLayout ? panel.shellFontSize * 1.083 : 13
                     font.weight: panel.countingDown ? Font.DemiBold : Font.Normal
                     font.features: { "tnum": 1 }
                     color: panel.clockColor
@@ -963,16 +1012,18 @@ PanelWindow {
             y: panel._outsideBelow ? card.y - height - 10 : card.y + card.height + 10
             width: modelLabel.implicitWidth + 20
             height: modelLabel.implicitHeight + 8
-            radius: height / 2
-            color: panel._styleColor("background", VT.Theme.bgColor)
+            radius: panel.shellLayout ? Math.min(height / 2, panel._cardRadius()) : height / 2
+            color: panel.shellLayout ? panel._frameBackgroundColor() : panel._styleColor("background", VT.Theme.bgColor)
             border.width: 1
             border.color: Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), 0.18)
             Text {
                 id: modelLabel
                 anchors.centerIn: parent
+                textFormat: Text.PlainText
                 text: panel.modelText
-                font.pixelSize: 12
-                color: panel._styleColor("foreground", VT.Theme.textColor)
+                font.family: panel.textFamily
+                font.pixelSize: panel.shellLayout ? panel.shellFontSize : 12
+                color: panel._foregroundColor()
             }
         }
     }

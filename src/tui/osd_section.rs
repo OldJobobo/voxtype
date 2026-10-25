@@ -103,7 +103,7 @@ const TABLE: &str = "osd";
 const FRONTEND_CHOICES: &[&str] = &["gtk4", "native", "quickshell"];
 const PALETTE_CHOICES: &[&str] = &["auto", "omarchy", "fallback", "package", "custom"];
 const LAYOUT_CHOICES: &[&str] = &[
-    "compact", "wide", "minimal", "pill", "tile", "orb", "custom",
+    "compact", "wide", "minimal", "pill", "shell", "tile", "orb", "custom",
 ];
 const POSITION_CHOICES: &[&str] = &[
     "bottom-center",
@@ -615,6 +615,8 @@ fn guidance_for_field(state: &OsdState) -> Vec<Line<'_>> {
             Line::from("  compact  current default card"),
             Line::from("  wide     wider card for denser layer recipes"),
             Line::from("  minimal  smaller state/meter surface"),
+            Line::from("  pill     compact strip with fully rounded ends"),
+            Line::from("  shell    strip with Omarchy Shell chrome and live rounding"),
             Line::from("  tile     square card for centered visualizations"),
             Line::from("  orb      circular frame for ring-focused recipes"),
             Line::from("  custom   reserved for package-provided QML layouts"),
