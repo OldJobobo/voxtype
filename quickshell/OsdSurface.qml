@@ -18,6 +18,7 @@
 
 import QtQuick
 import QtQuick.Effects
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Wayland
 import "voxtype-shared" as VT
@@ -81,18 +82,19 @@ PanelWindow {
       : daemonState === "transcribing" ? panel._styleColor("transcribing", VT.Theme.transcribingColor)
       :                                  panel._styleColor("idle", VT.Theme.idleColor)
 
-    // Ring of recent per-frame peaks (0.0..1.0). Capacity = 3 s @ 100 Hz.
-    // Stored as a plain array; we shift() when full to keep newest-on-right.
+    // Capacity of the waveform history: 3 s @ 100 Hz.
     readonly property int waveformColumns: Math.round(VT.Theme.waveformWindowSecs * 100)
-    property var ring: []
 
-    // Peak meter state (kept in dBFS so the held-peak decay math matches
-    // src/osd/visual.rs's PeakHold verbatim).
-    property real currentPeakDbfs: -120
-    property real heldDbfs: -120
-    property real currentPeak: 0
-    property real currentRms: 0
-    property real lastFrameTsMs: 0
+    // Live meter state, written at audio rate (100 Hz) and read by the
+    // renderer once per animation tick. A plain object mutated in place:
+    // frames change no QML properties, so they trigger no bindings.
+    // `ring` holds recent per-frame peaks (0.0..1.0), newest last. dBFS
+    // values match src/osd/visual.rs's PeakHold.
+    property var _meter: ({
+        peak: 0, rms: 0, vad: false,
+        peakDbfs: -120, heldDbfs: -120, lastTsMs: 0,
+        ring: []
+    })
     readonly property string customQmlUrl: _customQmlUrl()
     readonly property bool hasCustomQml: customQmlUrl.length > 0
     /// Set when the custom QML package fails to load, so the built-in
@@ -102,8 +104,10 @@ PanelWindow {
     /// Every built-in element keys its visibility off this so a broken
     /// package falls back to the default card.
     readonly property bool customActive: hasCustomQml && !customQmlFailed
-    readonly property real voiceEnergy: Math.min(1.0, Math.max(0.0, currentRms * 6.0 + currentPeak * 0.85))
-    readonly property real orbHaloEnergy: Math.min(1.0, Math.max(0.0, currentRms * 10.0 + currentPeak * 1.8))
+    // Smoothed on the renderer's tick, so decorations need no Behaviors.
+    readonly property real voiceEnergy: recipeRenderer.voiceEnergy
+    readonly property real orbHaloEnergy: recipeRenderer.haloEnergy
+    readonly property bool recordingVisual: daemonState === "recording"
 
     onCustomQmlUrlChanged: customQmlFailed = false
 
@@ -251,13 +255,15 @@ PanelWindow {
     }
 
     function _resetMeters() {
-        ring = [];
-        currentPeakDbfs = -120;
-        heldDbfs = -120;
-        currentPeak = 0;
-        currentRms = 0;
-        lastFrameTsMs = 0;
-        recipeRenderer.repaint();
+        const m = _meter;
+        m.peak = 0;
+        m.rms = 0;
+        m.vad = false;
+        m.peakDbfs = -120;
+        m.heldDbfs = -120;
+        m.lastTsMs = 0;
+        m.ring.length = 0;
+        recipeRenderer.reset();
     }
 
     Connections {
@@ -266,13 +272,13 @@ PanelWindow {
         // showing) skip the 100 Hz frame work entirely.
         enabled: panel.audio !== null && panel.visible
         function onFrameReceived(peak, rms, vad, tsMs) {
-            panel.currentPeak = peak;
-            panel.currentRms = rms;
+            const m = panel._meter;
+            m.peak = peak;
+            m.rms = rms;
+            m.vad = vad;
 
-            // Push the new peak onto the ring in place; drop the oldest
-            // when full. Copying it at 100 Hz buys nothing: the renderer
-            // reads the ring on its own timer, not on change signals.
-            const r = panel.ring;
+            // Newest peak on the right; drop the oldest when full.
+            const r = m.ring;
             r.push(peak);
             if (r.length > panel.waveformColumns) {
                 r.splice(0, r.length - panel.waveformColumns);
@@ -281,25 +287,20 @@ PanelWindow {
             // dBFS from linear peak. Floor at -120 to match visual.rs's
             // PeakHold::held_dbfs sentinel for "effectively silent".
             const dbfs = peak > 0.0 ? 20 * Math.log10(peak) : -120;
-            panel.currentPeakDbfs = dbfs;
+            m.peakDbfs = dbfs;
 
             // Held-peak: snap up on a louder peak, otherwise decay at
             // peakDecayDbPerSec. dt comes from the frame timestamps so
             // a paused daemon (no frames) doesn't unrealistically decay
             // before we receive the next frame.
-            const dtMs = panel.lastFrameTsMs > 0
-                ? Math.max(0, tsMs - panel.lastFrameTsMs)
-                : 10;
-            panel.lastFrameTsMs = tsMs;
-            const dt = dtMs / 1000;
-            if (dbfs > panel.heldDbfs) {
-                panel.heldDbfs = dbfs;
+            const dt = (m.lastTsMs > 0 ? Math.max(0, tsMs - m.lastTsMs) : 10) / 1000;
+            m.lastTsMs = tsMs;
+            if (dbfs > m.heldDbfs) {
+                m.heldDbfs = dbfs;
             } else {
-                const decayed = panel.heldDbfs - VT.Theme.peakDecayDbPerSec * dt;
-                panel.heldDbfs = decayed < -120 ? -120 : decayed;
+                const decayed = m.heldDbfs - VT.Theme.peakDecayDbPerSec * dt;
+                m.heldDbfs = decayed < -120 ? -120 : decayed;
             }
-            // No repaint here: the renderer's animation timer already
-            // drives painting whenever the OSD is visible.
         }
         function onDisconnected() {
             panel._resetMeters();
@@ -328,11 +329,6 @@ PanelWindow {
 
     onAudioChanged: _syncCustomItem()
     onStyleChanged: _syncCustomItem()
-    onOrbHaloEnergyChanged: {
-        if (panel.visible && orbBackdropShadow.visible) {
-            orbBackdropShadow.requestPaint();
-        }
-    }
 
     Loader {
         id: customLoader
@@ -362,6 +358,9 @@ PanelWindow {
         border.color: panel._styleColor("accent", panel.stateColor)
     }
 
+    // Energy-driven values come pre-smoothed from the renderer's tick,
+    // so they bind directly. Behaviors here would restart an animation
+    // on every tick; only the recording fade-in/out animates.
     MultiEffect {
         id: frameGlow
         visible: !panel.customActive && panel._frameGlowEnabled() && !panel._isOrbLayout()
@@ -374,94 +373,112 @@ PanelWindow {
         shadowHorizontalOffset: 0
         shadowVerticalOffset: 0
         shadowColor: panel._styleColor("accent", panel.stateColor)
-        shadowOpacity: panel.daemonState === "recording" ? 0.18 + panel.voiceEnergy * 0.34 : 0.0
+        shadowOpacity: 0.18 + panel.voiceEnergy * 0.34
         shadowBlur: 0.68 + panel.voiceEnergy * 0.22
         shadowScale: 1.02 + panel.voiceEnergy * 0.055
         blurMax: 64
-        opacity: panel.daemonState === "recording" ? 1.0 : 0.0
-        Behavior on shadowOpacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-        Behavior on shadowBlur { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-        Behavior on shadowScale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-        Behavior on opacity { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+        opacity: panel.recordingVisual ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
     }
 
-    Rectangle {
-        id: frameHalo
+    Item {
+        anchors.fill: parent
         visible: !panel.customActive && panel._frameHaloEnabled() && !panel._isOrbLayout()
-        width: card.width + 3
-        height: card.height + 3
-        anchors.centerIn: card
-        radius: card.radius + 1.5
-        color: "transparent"
-        border.color: panel._styleColor("accent", panel.stateColor)
-        border.width: 1 + panel.voiceEnergy * 1.4
-        opacity: panel.daemonState === "recording" ? 0.12 + panel.voiceEnergy * 0.28 : 0.0
+        opacity: panel.recordingVisual ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-        Behavior on border.width { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-    }
 
-    Canvas {
-        id: orbBackdropShadow
-        visible: !panel.customActive && panel._isOrbLayout()
-        width: card.width + 190
-        height: card.height + 190
-        anchors.centerIn: card
-        anchors.verticalCenterOffset: 8
-        opacity: panel.daemonState === "recording" ? 1.0 : 0.0
-        Component.onCompleted: requestPaint()
-        onVisibleChanged: requestPaint()
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
-        onPaint: {
-            const ctx = getContext("2d");
-            ctx.clearRect(0, 0, width, height);
-            if (!panel._isOrbLayout()) return;
-
-            const cx = width / 2;
-            const cy = height / 2;
-            const outer = card.width * (0.84 + panel.orbHaloEnergy * 0.12);
-            const alpha = 0.62 + panel.orbHaloEnergy * 0.16;
-
-            ctx.save();
-            ctx.translate(cx, cy);
-            const gradient = ctx.createRadialGradient(0, 0, outer * 0.05, 0, 0, outer);
-            gradient.addColorStop(0.0, "rgba(0, 0, 0, " + (alpha * 0.54) + ")");
-            gradient.addColorStop(0.42, "rgba(0, 0, 0, " + (alpha * 0.58) + ")");
-            gradient.addColorStop(0.74, "rgba(0, 0, 0, " + (alpha * 0.18) + ")");
-            gradient.addColorStop(1.0, "rgba(0, 0, 0, 0.0)");
-            ctx.fillStyle = gradient;
-            ctx.beginPath();
-            ctx.arc(0, 0, outer, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-        }
-        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-    }
-
-    Repeater {
-        id: orbHalo
-        model: [44, 30, 16]
-        delegate: Rectangle {
-            required property int modelData
-            required property int index
-            readonly property int haloIndex: index
-            visible: !panel.customActive && panel._isOrbLayout() && panel._frameHaloEnabled()
-            width: card.width + modelData + panel.orbHaloEnergy * [34, 24, 14][haloIndex]
-            height: card.height + modelData + panel.orbHaloEnergy * [34, 24, 14][haloIndex]
-            anchors.centerIn: card
-            radius: width / 2
+        Rectangle {
+            id: frameHalo
+            width: card.width + 3
+            height: card.height + 3
+            x: card.x - 1.5
+            y: card.y - 1.5
+            radius: card.radius + 1.5
             color: "transparent"
             border.color: panel._styleColor("accent", panel.stateColor)
-            border.width: [1.2, 1.8, 2.6][haloIndex] + panel.orbHaloEnergy * [1.6, 2.4, 3.2][haloIndex]
-            opacity: panel.daemonState === "recording"
-                ? [0.055, 0.11, 0.22][haloIndex] + panel.orbHaloEnergy * [0.18, 0.30, 0.48][haloIndex]
-                : 0.0
-            scale: 1.0 + panel.orbHaloEnergy * [0.036, 0.022, 0.010][haloIndex]
-            Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-            Behavior on scale { NumberAnimation { duration: 145; easing.type: Easing.OutCubic } }
-            Behavior on border.width { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-            Behavior on width { NumberAnimation { duration: 145; easing.type: Easing.OutCubic } }
-            Behavior on height { NumberAnimation { duration: 145; easing.type: Easing.OutCubic } }
+            border.width: 1 + panel.voiceEnergy * 1.4
+            opacity: 0.12 + panel.voiceEnergy * 0.28
+        }
+    }
+
+    // Soft dark backdrop behind the orb: a static radial gradient that
+    // only scales and fades with energy, so it never re-rasterizes.
+    Item {
+        id: orbBackdrop
+        visible: !panel.customActive && panel._isOrbLayout()
+        readonly property real maxOuter: card.width * 0.96
+        x: card.x + card.width / 2 - maxOuter
+        y: card.y + card.height / 2 + 8 - maxOuter
+        width: maxOuter * 2
+        height: maxOuter * 2
+        opacity: panel.recordingVisual ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        Shape {
+            anchors.fill: parent
+            preferredRendererType: Shape.CurveRenderer
+            opacity: 0.62 + panel.orbHaloEnergy * 0.16
+            scale: (0.84 + panel.orbHaloEnergy * 0.12) / 0.96
+            ShapePath {
+                strokeColor: "transparent"
+                fillGradient: RadialGradient {
+                    centerX: orbBackdrop.maxOuter; centerY: orbBackdrop.maxOuter
+                    centerRadius: orbBackdrop.maxOuter
+                    focalX: orbBackdrop.maxOuter; focalY: orbBackdrop.maxOuter
+                    focalRadius: orbBackdrop.maxOuter * 0.05
+                    GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.54) }
+                    GradientStop { position: 0.42; color: Qt.rgba(0, 0, 0, 0.58) }
+                    GradientStop { position: 0.74; color: Qt.rgba(0, 0, 0, 0.18) }
+                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.0) }
+                }
+                PathRectangle {
+                    width: orbBackdrop.width
+                    height: orbBackdrop.height
+                    radius: orbBackdrop.maxOuter
+                }
+            }
+        }
+    }
+
+    // Orb halo: one soft accent glow hugging the orb's edge that swells
+    // and brightens with the voice. A static gradient, so energy changes
+    // only move a transform and an opacity.
+    Item {
+        id: orbGlow
+        visible: !panel.customActive && panel._isOrbLayout() && panel._frameHaloEnabled()
+        readonly property real outer: card.width * 0.92
+        readonly property real edge: (card.width / 2) / outer
+        x: card.x + card.width / 2 - outer
+        y: card.y + card.height / 2 - outer
+        width: outer * 2
+        height: outer * 2
+        opacity: panel.recordingVisual ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+        Shape {
+            id: glowShape
+            anchors.fill: parent
+            preferredRendererType: Shape.CurveRenderer
+            readonly property color tint: panel._styleColor("accent", panel.stateColor)
+            opacity: 0.30 + panel.orbHaloEnergy * 0.70
+            scale: 0.90 + panel.orbHaloEnergy * 0.10
+            ShapePath {
+                strokeColor: "transparent"
+                fillGradient: RadialGradient {
+                    centerX: orbGlow.outer; centerY: orbGlow.outer; centerRadius: orbGlow.outer
+                    focalX: orbGlow.outer; focalY: orbGlow.outer
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: orbGlow.edge * 0.96; color: "transparent" }
+                    GradientStop { position: orbGlow.edge * 1.04; color: Qt.rgba(glowShape.tint.r, glowShape.tint.g, glowShape.tint.b, 0.42) }
+                    GradientStop { position: orbGlow.edge + (1 - orbGlow.edge) * 0.45; color: Qt.rgba(glowShape.tint.r, glowShape.tint.g, glowShape.tint.b, 0.12) }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+                PathRectangle {
+                    width: orbGlow.width
+                    height: orbGlow.height
+                    radius: orbGlow.outer
+                }
+            }
         }
     }
 
@@ -476,9 +493,12 @@ PanelWindow {
         color: panel._frameBackgroundColor()
         border.width: panel._frameBorderWidth()
         border.color: panel._frameBorderColor()
-        opacity: (panel.daemonState === "recording" && panel.audio && panel.audio.running && !panel.audio.vad)
-                 ? 0.78 : 1.0
-        Behavior on opacity { NumberAnimation { duration: 120 } }
+        // Dim slightly between words. Smoothed on the renderer's tick: a
+        // Behavior here would animate on every VAD flip, several times a
+        // second, and keep the window redrawing at the display's full
+        // refresh rate.
+        opacity: (panel.recordingVisual && panel.audio && panel.audio.running)
+                 ? 0.78 + 0.22 * recipeRenderer.voiceActivity : 1.0
 
         Row {
             anchors.fill: parent
@@ -486,18 +506,16 @@ PanelWindow {
             anchors.rightMargin: panel._isBlockLayout() ? 0 : VT.Theme.padding
             spacing: 10
 
-            Text {
+            // Lifted toward the foreground: some theme palettes map the
+            // state roles to dark, low-contrast colors.
+            VT.StateIcon {
                 visible: !panel._isBlockLayout()
                 width: 28
+                height: 22
                 anchors.verticalCenter: parent.verticalCenter
-                horizontalAlignment: Text.AlignHCenter
-                text: panel.daemonState === "recording"    ? "󰍬"
-                   : panel.daemonState === "streaming"     ? "󰜟"
-                   : panel.daemonState === "transcribing"  ? "󰔟"
-                   :                                          "󰍬"
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 26
-                color: panel.stateColor
+                daemonState: panel.daemonState
+                phase: recipeRenderer.phase
+                color: Qt.tint(panel.stateColor, Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), 0.5))
             }
 
             Column {
@@ -521,13 +539,8 @@ PanelWindow {
                         // hide on its own.
                         active: panel.visible
                         style: panel.style
-                        ring: panel.ring
+                        meter: panel._meter
                         daemonState: panel.daemonState
-                        vad: panel.audio && panel.audio.vad
-                        currentPeakDbfs: panel.currentPeakDbfs
-                        heldDbfs: panel.heldDbfs
-                        peak: panel.currentPeak
-                        rms: panel.currentRms
                         waveformColumns: panel.waveformColumns
                         waveformGain: VT.Theme.waveformGain
                         meterFloorDbfs: VT.Theme.meterFloorDbfs
