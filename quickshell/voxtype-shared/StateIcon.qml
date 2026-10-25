@@ -1,5 +1,7 @@
 // Vector state icon for the OSD: a microphone while recording, audio
-// lines while streaming, and a spinning arc while transcribing.
+// lines while streaming, and a spinning arc while transcribing. Setting
+// `result` shows how a session ended instead: `done` (a check),
+// `nospeech` (a crossed-out microphone) or `error` (a crossed circle).
 //
 // Drawn with QtQuick.Shapes instead of Nerd Font glyphs, so it renders
 // the same without that font installed and stays crisp at any size. The
@@ -27,11 +29,15 @@ Item {
     /// Seconds of animation time; drives the transcribing spinner.
     property real phase: 0.0
     property real strokeWidth: 2.0
+    /// Overrides the state icon when set: "done", "nospeech" or "error".
+    property string result: ""
 
     implicitWidth: 24
     implicitHeight: 24
 
-    readonly property string _kind: daemonState === "transcribing" ? "spinner"
+    readonly property string _kind: result === "done" || result === "error" ? result
+        : result === "nospeech" ? "mic"
+        : daemonState === "transcribing" ? "spinner"
         : daemonState === "streaming" ? "lines"
         : "mic"
 
@@ -68,6 +74,54 @@ Item {
                 PathLine { x: 18.5; y: 10.5 }
                 PathMove { x: 12; y: 18 }
                 PathLine { x: 12; y: 21.5 }
+            }
+        }
+
+        // Slash across the microphone for "no speech".
+        Shape {
+            anchors.fill: parent
+            visible: root.result === "nospeech"
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: root.color
+                strokeWidth: root.strokeWidth
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                startX: 3.5; startY: 3.5
+                PathLine { x: 20.5; y: 20.5 }
+            }
+        }
+
+        Shape {
+            anchors.fill: parent
+            visible: root._kind === "done"
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: root.color
+                strokeWidth: root.strokeWidth
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                joinStyle: ShapePath.RoundJoin
+                startX: 4.5; startY: 12.5
+                PathLine { x: 9.5; y: 17.5 }
+                PathLine { x: 19.5; y: 6.5 }
+            }
+        }
+
+        Shape {
+            anchors.fill: parent
+            visible: root._kind === "error"
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: root.color
+                strokeWidth: root.strokeWidth
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathAngleArc { centerX: 12; centerY: 12; radiusX: 9; radiusY: 9; startAngle: 0; sweepAngle: 360 }
+                PathMove { x: 9; y: 9 }
+                PathLine { x: 15; y: 15 }
+                PathMove { x: 15; y: 9 }
+                PathLine { x: 9; y: 15 }
             }
         }
 

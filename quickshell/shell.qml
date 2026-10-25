@@ -112,6 +112,8 @@ ShellRoot {
             activeOutput: shell.focusedScreen === null || shell.focusedOutputName === modelData.name
             daemonState: stateReader.state
             osdSuppressed: stateReader.osdSuppressed
+            session: stateReader.session
+            outcome: stateReader.outcome
             audio: audioBridge
             style: osdStyle
         }

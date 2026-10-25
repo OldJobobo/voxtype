@@ -50,9 +50,116 @@ PanelWindow {
     /// visual recipe layers, and optional custom QML package entry.
     property var style: null
 
+    /// The daemon's recording.json and outcome.json, from VT.StateReader:
+    /// the session in flight (start time, limit, engine, model) and how
+    /// the last one ended. Null when unavailable (older daemons).
+    property var session: null
+    property var outcome: null
+
+    // ----- session clock -----
+
+    property real _now: Date.now()
+    Timer {
+        interval: 250
+        repeat: true
+        running: panel.visible && panel.session !== null
+        triggeredOnStart: true
+        onTriggered: panel._now = Date.now()
+    }
+    readonly property bool _sessionLive: session !== null && !!session.started_at_ms
+        && (daemonState === "recording" || daemonState === "streaming")
+    readonly property real elapsedSecs: _sessionLive
+        ? Math.max(0, (_now - session.started_at_ms) / 1000) : 0
+    readonly property real limitSecs: session && session.max_duration_secs > 0 ? session.max_duration_secs : 0
+    readonly property real remainingSecs: limitSecs > 0 ? Math.max(0, limitSecs - elapsedSecs) : 0
+    /// The last stretch before max_duration_secs stops the recording.
+    readonly property bool countingDown: _sessionLive && limitSecs > 0
+        && remainingSecs <= Math.min(15, limitSecs / 2)
+
+    function _clock(secs) {
+        const s = Math.max(0, Math.floor(secs));
+        const sec = s % 60;
+        return Math.floor(s / 60) + ":" + (sec < 10 ? "0" : "") + sec;
+    }
+
+    readonly property string clockText: countingDown ? _clock(Math.ceil(remainingSecs)) : _clock(elapsedSecs)
+    readonly property color clockColor: !countingDown ? panel._styleColor("muted", VT.Theme.textColor)
+        : remainingSecs <= 5 ? panel._styleColor("error", VT.Theme.meterHighColor)
+        : panel._styleColor("warning", VT.Theme.meterMidColor)
+
+    /// Shown briefly when a session starts, so a --model override or a
+    /// modifier-selected model is confirmed before speaking.
+    readonly property string modelText: session && session.model
+        ? (session.engine ? session.engine + " · " : "") + session.model : ""
+    property bool _modelChip: false
+    property real _chipShownFor: 0
+    Timer {
+        id: modelChipTimer
+        interval: 1800
+        onTriggered: panel._modelChip = false
+    }
+    onSessionChanged: {
+        _syncCustomItem();
+        // Once per session, keyed on its start time.
+        if (session && session.started_at_ms && session.started_at_ms !== _chipShownFor) {
+            _chipShownFor = session.started_at_ms;
+            _modelChip = true;
+            modelChipTimer.restart();
+        }
+    }
+
+    // ----- result card -----
+
+    /// How the session that just ended went: { kind, chars, limit }, or
+    /// null. Held for a moment after idle so the HUD can confirm the
+    /// result instead of vanishing.
+    property var flash: null
+    readonly property bool flashing: flash !== null
+    // A --no-osd session stays hidden through its result too. The marker
+    // is cleared on idle, before the outcome is read, so latch it.
+    property bool _sessionSuppressed: false
+    onOsdSuppressedChanged: if (osdSuppressed) _sessionSuppressed = true
+
+    Timer {
+        id: flashTimer
+        onTriggered: panel.flash = null
+    }
+
+    onOutcomeChanged: {
+        _syncCustomItem();
+        const o = outcome;
+        if (!o || !o.at_ms || Date.now() - o.at_ms > 3000) return;
+        // A cancel or an accidental tap needs no confirmation.
+        const shown = { ok: 1, no_speech: 1, empty: 1, error: 1, output_failed: 1 };
+        if (!shown[o.outcome] || _sessionSuppressed || !activeOutput) return;
+        flash = { kind: o.outcome, chars: o.chars || 0, limit: !!o.limit_reached };
+        flashTimer.interval = o.outcome === "ok" && !o.limit_reached ? 1000 : 2600;
+        flashTimer.restart();
+    }
+
+    readonly property string flashIcon: !flash ? ""
+        : flash.kind === "ok" ? "done"
+        : flash.kind === "no_speech" || flash.kind === "empty" ? "nospeech"
+        : "error"
+    readonly property color flashColor: !flash ? stateColor
+        : flash.kind === "ok" ? panel._styleColor("success", VT.Theme.meterLowColor)
+        : flash.kind === "no_speech" || flash.kind === "empty" ? panel._styleColor("warning", VT.Theme.meterMidColor)
+        : panel._styleColor("error", VT.Theme.meterHighColor)
+    readonly property string flashText: {
+        if (!flash) return "";
+        let text = flash.kind === "ok" ? (flash.chars === 1 ? "1 character" : flash.chars + " characters")
+            : flash.kind === "no_speech" ? "No speech detected"
+            : flash.kind === "empty" ? "Nothing transcribed"
+            : flash.kind === "output_failed" ? "Couldn't type the text"
+            : "Transcription failed";
+        if (flash.limit) text = "Time limit reached · " + text;
+        return text;
+    }
+
     /// True while the HUD should be on screen. The window itself stays
     /// mapped a little longer (`_leaving`) so the exit animation can play.
-    readonly property bool shown: !osdSuppressed && activeOutput && daemonState !== "idle" && daemonState !== ""
+    readonly property bool shown: !osdSuppressed && activeOutput
+        && ((daemonState !== "idle" && daemonState !== "") || flashing)
     property bool _leaving: false
     visible: shown || _leaving
 
@@ -239,6 +346,10 @@ PanelWindow {
         return Math.max(margin, Math.min(panel.height - _cardHeight() - margin, y));
     }
 
+    /// Whether text outside the card goes below it: below unless the card
+    /// sits near the bottom edge, where it would fall off the screen.
+    readonly property bool _outsideBelow: _cardY() + _cardHeight() + 60 < height
+
     function _isBlockLayout() {
         const layout = _styleLayout();
         return layout === "tile" || layout === "orb" || layout === "custom";
@@ -261,6 +372,8 @@ PanelWindow {
         if ("audio" in customLoader.item) customLoader.item.audio = audio;
         if ("theme" in customLoader.item) customLoader.item.theme = style;
         if ("recipe" in customLoader.item) customLoader.item.recipe = style && style.config ? style.config.visual : null;
+        if ("session" in customLoader.item) customLoader.item.session = session;
+        if ("outcome" in customLoader.item) customLoader.item.outcome = outcome;
         if ("assetRoot" in customLoader.item) {
             customLoader.item.assetRoot = style && style.config ? style.config.asset_root || "" : "";
         }
@@ -326,6 +439,14 @@ PanelWindow {
         if (daemonState === "idle" || daemonState === "") {
             _resetMeters();
         } else {
+            if (daemonState === "recording" || daemonState === "streaming") {
+                if (shownState !== "recording" && shownState !== "streaming" || flashing) {
+                    // A new session: drop the previous one's result.
+                    flashTimer.stop();
+                    flash = null;
+                }
+                if (!osdSuppressed) _sessionSuppressed = false;
+            }
             shownState = daemonState;
         }
         _syncCustomItem();
@@ -567,7 +688,8 @@ PanelWindow {
             radius: panel._cardRadius()
             color: panel._frameBackgroundColor()
             border.width: panel._frameBorderWidth()
-            border.color: panel._frameBorderColor()
+            border.color: panel.flashing && panel._frameValue("border", "state") === "state"
+            ? panel.flashColor : panel._frameBorderColor()
             // Dim slightly between words. Smoothed on the renderer's tick: a
             // Behavior here would animate on every VAD flip, several times a
             // second, and keep the window redrawing at the display's full
@@ -589,14 +711,17 @@ PanelWindow {
                     height: 22
                     anchors.verticalCenter: parent.verticalCenter
                     daemonState: panel.shownState
+                    result: panel.flashIcon
                     phase: recipeRenderer.phase
-                    color: Qt.tint(panel.stateColor, Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), 0.5))
+                    color: Qt.tint(panel.flashing ? panel.flashColor : panel.stateColor,
+                                   Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), panel.flashing ? 0.2 : 0.5))
                 }
 
                 Column {
                     width: panel._isBlockLayout()
                         ? card.width
                         : card.width - 28 - 2 * VT.Theme.padding - 10
+                            - (stripClock.visible ? stripClock.width + 10 : 0)
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4
 
@@ -609,6 +734,8 @@ PanelWindow {
                         VT.RecipeRenderer {
                             id: recipeRenderer
                             anchors.fill: parent
+                            opacity: panel.flashing ? 0.0 : 1.0
+                            Behavior on opacity { NumberAnimation { duration: 140 } }
                             // Items inside a hidden PanelWindow still report
                             // visible, so the renderer can't see a --no-osd
                             // hide on its own.
@@ -620,8 +747,136 @@ PanelWindow {
                             waveformGain: VT.Theme.waveformGain
                             meterFloorDbfs: VT.Theme.meterFloorDbfs
                         }
+
+                        Text {
+                            anchors.fill: parent
+                            visible: !panel._isBlockLayout()
+                            opacity: panel.flashing ? 1.0 : 0.0
+                            Behavior on opacity { NumberAnimation { duration: 140 } }
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                            text: panel.flashText
+                            font.pixelSize: 15
+                            font.weight: Font.Medium
+                            color: panel._styleColor("foreground", VT.Theme.textColor)
+                        }
                     }
                 }
+
+                Text {
+                    id: stripClock
+                    visible: !panel._isBlockLayout() && panel.session !== null
+                    width: 38
+                    anchors.verticalCenter: parent.verticalCenter
+                    horizontalAlignment: Text.AlignRight
+                    opacity: panel._sessionLive ? 1.0 : 0.0
+                    Behavior on opacity { NumberAnimation { duration: 140 } }
+                    text: panel.clockText
+                    font.pixelSize: 13
+                    font.weight: panel.countingDown ? Font.DemiBold : Font.Normal
+                    font.features: { "tnum": 1 }
+                    color: panel.clockColor
+                }
+            }
+
+            // Final seconds before max_duration_secs: a bar along the
+            // card's bottom edge drains with the time left.
+            Rectangle {
+                visible: panel.countingDown && !panel._isBlockLayout()
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Math.max(2, card.radius / 3)
+                x: card.radius
+                height: 2
+                radius: 1
+                width: (card.width - 2 * card.radius)
+                    * Math.min(1, panel.remainingSecs / Math.max(1, Math.min(15, panel.limitSecs / 2)))
+                color: panel.clockColor
+            }
+        }
+
+        // Block layouts (tile, orb) have no room inside the card: their
+        // clock sits just outside it, and their result is a large icon
+        // over the card with the message beneath.
+        Text {
+            visible: panel._isBlockLayout() && !panel.customActive && panel.session !== null
+            opacity: panel._sessionLive ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 140 } }
+            anchors.horizontalCenter: card.horizontalCenter
+            y: panel._outsideBelow ? card.y + card.height + 10 : card.y - height - 10
+            text: panel.clockText
+            font.pixelSize: 13
+            font.weight: panel.countingDown ? Font.DemiBold : Font.Normal
+            font.features: { "tnum": 1 }
+            color: panel.clockColor
+        }
+
+        // Backed by the card background so the result stays readable
+        // over a busy wallpaper when the layout draws no card of its own.
+        Rectangle {
+            visible: panel._isBlockLayout() && !panel.customActive
+            opacity: panel.flashing ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 140 } }
+            anchors.centerIn: card
+            width: Math.min(card.width, card.height) * 0.62
+            height: width
+            radius: width / 2
+            color: panel._styleColor("background", VT.Theme.bgColor)
+            border.width: 1.5
+            border.color: Qt.alpha(panel.flashColor, 0.6)
+
+            VT.StateIcon {
+                anchors.centerIn: parent
+                width: parent.width * 0.58
+                height: width
+                strokeWidth: 1.8
+                daemonState: panel.shownState
+                result: panel.flashIcon
+                color: panel.flashColor
+            }
+        }
+
+        Rectangle {
+            visible: panel._isBlockLayout() && !panel.customActive
+            opacity: panel.flashing ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 140 } }
+            anchors.horizontalCenter: card.horizontalCenter
+            y: panel._outsideBelow ? card.y + card.height + 10 : card.y - height - 10
+            width: flashLabel.implicitWidth + 24
+            height: flashLabel.implicitHeight + 10
+            radius: height / 2
+            color: panel._styleColor("background", VT.Theme.bgColor)
+
+            Text {
+                id: flashLabel
+                anchors.centerIn: parent
+                text: panel.flashText
+                font.pixelSize: 14
+                font.weight: Font.Medium
+                color: panel._styleColor("foreground", VT.Theme.textColor)
+            }
+        }
+
+        // Engine and model, briefly, as a recording starts (#854).
+        Rectangle {
+            id: modelChip
+            visible: !panel.customActive && panel.modelText.length > 0
+            opacity: panel._modelChip && panel._sessionLive ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+            anchors.horizontalCenter: card.horizontalCenter
+            // Opposite the block-layout clock, so the two never overlap.
+            y: panel._outsideBelow ? card.y - height - 10 : card.y + card.height + 10
+            width: modelLabel.implicitWidth + 20
+            height: modelLabel.implicitHeight + 8
+            radius: height / 2
+            color: panel._styleColor("background", VT.Theme.bgColor)
+            border.width: 1
+            border.color: Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), 0.18)
+            Text {
+                id: modelLabel
+                anchors.centerIn: parent
+                text: panel.modelText
+                font.pixelSize: 12
+                color: panel._styleColor("foreground", VT.Theme.textColor)
             }
         }
     }

@@ -642,7 +642,7 @@ Item {
             }
 
             Rectangle {
-                visible: root._heldFill > 0
+                visible: root._heldFill > 0.01
                 x: Math.max(0, mt.width * root._heldFill - 1.5)
                 y: -2
                 width: 3
