@@ -1130,6 +1130,10 @@ pub struct Daemon {
     // Set when `max_duration_secs` ends the session in flight, so the
     // outcome published for the OSD can say the limit stopped it.
     osd_limit_reached: bool,
+    // Whether this session's outcome has been published. The first one
+    // wins: some paths report a specific outcome (no speech) and then
+    // fall through a generic one (empty result) on the way to idle.
+    osd_outcome_sent: std::sync::atomic::AtomicBool,
 }
 
 impl Daemon {
@@ -1246,6 +1250,7 @@ impl Daemon {
             ducked_media_streams: Vec::new(),
             media_fade_task: None,
             osd_limit_reached: false,
+            osd_outcome_sent: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -1363,6 +1368,8 @@ impl Daemon {
     /// OSD reads.
     fn begin_osd_session(&mut self, state: &State) {
         self.osd_limit_reached = false;
+        self.osd_outcome_sent
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         if self.state_file_path.is_none() {
             return;
         }
@@ -1414,7 +1421,11 @@ impl Daemon {
     /// Publish `outcome.json` saying how the session just ended, for OSD
     /// frontends to confirm the result.
     fn publish_osd_outcome(&self, outcome: osd::session::OutcomeKind, chars: usize) {
-        if self.state_file_path.is_none() {
+        if self.state_file_path.is_none()
+            || self
+                .osd_outcome_sent
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
             return;
         }
         osd::session::write_outcome(
