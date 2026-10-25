@@ -1277,9 +1277,9 @@ restart. If a theme switch doesn't recolor the OSD, check that `palette`
 isn't set to `fallback`, `package`, or `custom`, and restart the daemon if
 the launcher was started before the theme directory existed.
 
-### Shell Line doesn't match the shell's corners or border
+### Shell Line or Shell Dots doesn't match the shell's corners or border
 
-Shell Line needs both a launcher and QML tree that support `layout = "shell"`.
+Both shell presets need a launcher and QML tree that support `layout = "shell"`.
 If the layout is rejected or its shape is unchanged, upgrade both parts as
 described above. The radius comes from `hyprctl -j getoption decoration:rounding`;
 without working Hyprland IPC the design deliberately uses square corners.

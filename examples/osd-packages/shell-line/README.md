@@ -15,6 +15,9 @@ Both the launcher and QML tree must support the new `shell` layout (newer
 than the 1.1.1 release). The matching no-package preset is
 `examples/osd-recipes/shell-line.toml`.
 
-A synthetic Capsule/Shell Line comparison is in
+For voice-assistant dots in the same shell frame, use the sibling
+`shell-dots` package.
+
+A synthetic Capsule/Shell Line/Shell Dots comparison is in
 `docs/public/quickshell-osd-modern.png`; it uses generated voice levels on a
 plain background, not a microphone recording or a desktop capture.

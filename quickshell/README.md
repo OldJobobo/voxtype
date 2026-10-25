@@ -173,7 +173,8 @@ Omarchy's live Hyprland rounding, popup border (including gradient stops),
 monospace font, and spacing scale, with a steady 97% theme-background fill.
 It reads the theme's `shell.toml` and optional user shell overrides without
 importing Omarchy's QML modules. The `shell-line` recipe is Capsule's voice
-line in this frame. In `tile` and `orb` the elapsed
+line in this frame; `shell-dots` uses Aura's voice-assistant dots without its
+animated edge. Both are also available as manifest-only style packages. In `tile` and `orb` the elapsed
 time, the result message, and the model chip sit just outside the card.
 
 `[osd.frame]` controls the host card around the rendered recipe. Use

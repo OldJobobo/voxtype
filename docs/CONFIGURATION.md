@@ -3987,7 +3987,8 @@ from the active theme's `shell.toml`, overlaid by
 fill stays at 97% opacity instead of dimming between words. Missing tokens
 use shell defaults and the active palette; without Hyprland, corners are
 square. This is opt-in and leaves all other layouts unchanged. The
-`shell-line` recipe pairs it with Capsule's flowing voice strands.
+`shell-line` and `shell-dots` recipes pair it with Capsule's flowing voice
+strands or Aura's voice-assistant dots, respectively.
 
 `[osd.frame]` controls the host frame around the recipe. Set
 `background = "none"` or `border = "none"` for frameless recipes; the visual
@@ -3996,10 +3997,11 @@ in the theme's accent and state colors, with a soft glow, that turns slowly
 while listening, speeds up and brightens with your voice, and spins while
 transcribing.
 
-The shipped recipes include four minimal styles built on these: `capsule`
+The shipped recipes include five minimal styles built on these: `capsule`
 (a pill with a voice line), `shell-line` (the same line in shell chrome),
-`aura` (a pill with an aura edge and dots), and `halo` (a round badge with
-an aura edge and a voice line). Apply one with
+`shell-dots` (voice-assistant dots in shell chrome), `aura` (a pill with an
+aura edge and dots), and `halo` (a round badge with an aura edge and a voice
+line). Apply one with
 `voxtype setup osd --recipe capsule`.
 
 Around the recipe, the built-in Quickshell HUD also shows:

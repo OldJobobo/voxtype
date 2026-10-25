@@ -348,12 +348,13 @@ with `voxtype setup osd --recipe <name>`, which writes its keys into your
 config without duplicating any that are already there and prints each
 changed key with its previous value; `--dry-run` previews the change and
 `voxtype setup osd --list` shows what's installed. For a quiet HUD, the
-`capsule`, `shell-line`, `aura`, and `halo` recipes show only the state,
-your live voice level, and the clock; the `showcase-*` recipes layer more
-instruments. `shell-line` keeps Capsule's flowing lines but follows Omarchy
-Shell's corner rounding, popup border, monospace text, and spacing instead
-of the fully rounded pill shape. Its theme background stays steady, with
-no glow or dimming between words.
+`capsule`, `shell-line`, `shell-dots`, `aura`, and `halo` recipes show only
+the state, your live voice level, and the clock; the `showcase-*` recipes
+layer more instruments. `shell-line` keeps Capsule's flowing lines, while
+`shell-dots` uses Aura's voice-assistant dots. Both follow Omarchy Shell's
+corner rounding, popup border, monospace text, and spacing instead of the
+fully rounded pill shape. Their theme background stays steady, with no
+glow or dimming between words.
 Recipes resolve against
 `~/.config/voxtype/osd-recipes/`, `~/.local/share/voxtype/osd-recipes/`, and
 `/usr/share/voxtype/osd-recipes/`, and `--recipe` also accepts a path to a

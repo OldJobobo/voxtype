@@ -48,6 +48,8 @@ clock:
 - `shell-line.toml`: the same flowing strands in an Omarchy Shell panel:
   live Hyprland rounding, the theme's popup border (including gradients),
   monospace text, and shell-scaled padding. No glow or voice-driven dimming.
+- `shell-dots.toml`: the same shell frame with five voice-assistant dots
+  that stretch with speech and bounce while transcribing.
 - `aura.toml`: a pill with an animated gradient edge (`border = "aura"`) and
   voice-assistant dots.
 - `halo.toml`: a round badge with an aura edge and a voice line across it.
@@ -61,11 +63,12 @@ Showcases, which layer more instruments:
 - `showcase-signal-stack.toml`: a scrolling waveform plus meter over a visible
   host background.
 
-Shell Line is also available as a manifest-only style package under
-`examples/osd-packages/shell-line/`, for selection through `[osd] style`
+Shell Line and Shell Dots are also available as manifest-only style
+packages under `examples/osd-packages/shell-line/` and
+`examples/osd-packages/shell-dots/`, for selection through `[osd] style`
 without applying a config recipe.
 
-Shell Line's `shell` layout reads popup border/text and font/spacing tokens
+Their `shell` layout reads popup border/text and font/spacing tokens
 from the active theme's `shell.toml`, with `~/.config/omarchy/shell.toml`
 overrides. Theme changes apply live. Without Omarchy tokens it uses the
 active palette and shell defaults; without Hyprland it uses square corners.
@@ -75,6 +78,8 @@ Apply it from a checkout with:
 voxtype setup osd --recipe examples/osd-recipes/shell-line.toml --dry-run
 voxtype setup osd --recipe examples/osd-recipes/shell-line.toml
 ```
+
+Swap `shell-line.toml` for `shell-dots.toml` to use dots instead.
 
 The pill and shell layouts, the `line` and `dots` layers, and the aura border need
 a voxtype release newer than 1.1.1. Older daemons reject these recipes.
