@@ -50,7 +50,19 @@ PanelWindow {
     /// visual recipe layers, and optional custom QML package entry.
     property var style: null
 
-    visible: !osdSuppressed && activeOutput && daemonState !== "idle" && daemonState !== ""
+    /// True while the HUD should be on screen. The window itself stays
+    /// mapped a little longer (`_leaving`) so the exit animation can play.
+    readonly property bool shown: !osdSuppressed && activeOutput && daemonState !== "idle" && daemonState !== ""
+    property bool _leaving: false
+    visible: shown || _leaving
+
+    /// The state the built-in visuals show: the daemon state while shown,
+    /// and the last non-idle state while the exit animation plays, so the
+    /// card fades out as it was rather than flashing to idle colors.
+    property string shownState: "recording"
+
+    /// 0 = gone, 1 = fully present. Drives the enter/exit motion.
+    property real presence: 0.0
     anchors {
         top: true
         bottom: true
@@ -77,10 +89,10 @@ PanelWindow {
     // Per-state tint, shared by icon + card border so a Hyprland user
     // can read the daemon's state from screen-edge color alone.
     readonly property color stateColor:
-        daemonState === "recording"    ? panel._styleColor("recording", VT.Theme.recordingColor)
-      : daemonState === "streaming"    ? panel._styleColor("streaming", VT.Theme.streamingColor)
-      : daemonState === "transcribing" ? panel._styleColor("transcribing", VT.Theme.transcribingColor)
-      :                                  panel._styleColor("idle", VT.Theme.idleColor)
+        shownState === "recording"    ? panel._styleColor("recording", VT.Theme.recordingColor)
+      : shownState === "streaming"    ? panel._styleColor("streaming", VT.Theme.streamingColor)
+      : shownState === "transcribing" ? panel._styleColor("transcribing", VT.Theme.transcribingColor)
+      :                                 panel._styleColor("idle", VT.Theme.idleColor)
 
     // Capacity of the waveform history: 3 s @ 100 Hz.
     readonly property int waveformColumns: Math.round(VT.Theme.waveformWindowSecs * 100)
@@ -107,7 +119,7 @@ PanelWindow {
     // Smoothed on the renderer's tick, so decorations need no Behaviors.
     readonly property real voiceEnergy: recipeRenderer.voiceEnergy
     readonly property real orbHaloEnergy: recipeRenderer.haloEnergy
-    readonly property bool recordingVisual: daemonState === "recording"
+    readonly property bool recordingVisual: shownState === "recording"
 
     onCustomQmlUrlChanged: customQmlFailed = false
 
@@ -313,8 +325,22 @@ PanelWindow {
     onDaemonStateChanged: {
         if (daemonState === "idle" || daemonState === "") {
             _resetMeters();
+        } else {
+            shownState = daemonState;
         }
         _syncCustomItem();
+    }
+
+    onShownChanged: {
+        if (shown) {
+            exitAnimation.stop();
+            _leaving = false;
+            enterAnimation.restart();
+        } else if (presence > 0) {
+            _leaving = true;
+            enterAnimation.stop();
+            exitAnimation.restart();
+        }
     }
 
     // A surface skips frames while hidden, so whatever it held is stale
@@ -327,223 +353,273 @@ PanelWindow {
         }
     }
 
+    NumberAnimation {
+        id: enterAnimation
+        target: panel
+        property: "presence"
+        to: 1.0
+        duration: 220
+        easing.type: Easing.OutCubic
+    }
+
+    SequentialAnimation {
+        id: exitAnimation
+        NumberAnimation {
+            target: panel
+            property: "presence"
+            to: 0.0
+            duration: 160
+            easing.type: Easing.InCubic
+        }
+        ScriptAction { script: panel._leaving = false }
+    }
+
     onAudioChanged: _syncCustomItem()
     onStyleChanged: _syncCustomItem()
 
-    Loader {
-        id: customLoader
+    // Re-sync on live style reloads (theme switches) too, so a custom
+    // package's `recipe` and `assetRoot` don't go stale.
+    Connections {
+        target: panel.style
+        ignoreUnknownSignals: true
+        function onConfigChanged() { panel._syncCustomItem(); }
+    }
+
+    // Everything visible lives on this stage so enter/exit motion moves
+    // it as one piece: fade, a slight scale, and a short rise from (or
+    // sink toward) the screen edge the HUD is anchored to.
+    Item {
+        id: stage
         anchors.fill: parent
-        active: panel.customActive
-        source: panel.hasCustomQml ? panel.customQmlUrl : ""
-        onLoaded: panel._syncCustomItem()
-        onStatusChanged: {
-            if (status === Loader.Error) {
-                console.warn("voxtype OSD: failed to load custom QML, falling back to built-in surface:", source);
-                panel.customQmlFailed = true;
+        opacity: panel.presence
+        readonly property bool fromTop: panel._stylePosition().indexOf("top") === 0
+        transform: [
+            Scale {
+                origin.x: card.x + card.width / 2
+                origin.y: card.y + card.height / 2
+                xScale: panel.customActive ? 1.0 : 0.94 + 0.06 * panel.presence
+                yScale: xScale
+            },
+            Translate {
+                y: panel.customActive ? 0 : (1 - panel.presence) * (stage.fromTop ? -12 : 12)
+            }
+        ]
+
+        Loader {
+            id: customLoader
+            anchors.fill: parent
+            active: panel.customActive
+            source: panel.hasCustomQml ? panel.customQmlUrl : ""
+            onLoaded: panel._syncCustomItem()
+            onStatusChanged: {
+                if (status === Loader.Error) {
+                    console.warn("voxtype OSD: failed to load custom QML, falling back to built-in surface:", source);
+                    panel.customQmlFailed = true;
+                }
             }
         }
-    }
 
-    // Glow source lives in the scene (hidden) rather than inline on the
-    // MultiEffect property: an unparented item never joins the window's
-    // scene graph and may not be rendered into the effect texture.
-    Rectangle {
-        id: frameGlowSource
-        visible: false
-        width: card.width
-        height: card.height
-        radius: card.radius
-        color: "transparent"
-        border.width: 2
-        border.color: panel._styleColor("accent", panel.stateColor)
-    }
+        // Glow source lives in the scene (hidden) rather than inline on the
+        // MultiEffect property: an unparented item never joins the window's
+        // scene graph and may not be rendered into the effect texture.
+        Rectangle {
+            id: frameGlowSource
+            visible: false
+            width: card.width
+            height: card.height
+            radius: card.radius
+            color: "transparent"
+            border.width: 2
+            border.color: panel._styleColor("accent", panel.stateColor)
+        }
 
-    // Energy-driven values come pre-smoothed from the renderer's tick,
-    // so they bind directly. Behaviors here would restart an animation
-    // on every tick; only the recording fade-in/out animates.
-    MultiEffect {
-        id: frameGlow
-        visible: !panel.customActive && panel._frameGlowEnabled() && !panel._isOrbLayout()
-        anchors.centerIn: card
-        width: frameGlowSource.width
-        height: frameGlowSource.height
-        source: frameGlowSource
-        autoPaddingEnabled: true
-        shadowEnabled: true
-        shadowHorizontalOffset: 0
-        shadowVerticalOffset: 0
-        shadowColor: panel._styleColor("accent", panel.stateColor)
-        shadowOpacity: 0.18 + panel.voiceEnergy * 0.34
-        shadowBlur: 0.68 + panel.voiceEnergy * 0.22
-        shadowScale: 1.02 + panel.voiceEnergy * 0.055
-        blurMax: 64
-        opacity: panel.recordingVisual ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-    }
+        // Energy-driven values come pre-smoothed from the renderer's tick,
+        // so they bind directly. Behaviors here would restart an animation
+        // on every tick; only the recording fade-in/out animates.
+        MultiEffect {
+            id: frameGlow
+            visible: !panel.customActive && panel._frameGlowEnabled() && !panel._isOrbLayout()
+            anchors.centerIn: card
+            width: frameGlowSource.width
+            height: frameGlowSource.height
+            source: frameGlowSource
+            autoPaddingEnabled: true
+            shadowEnabled: true
+            shadowHorizontalOffset: 0
+            shadowVerticalOffset: 0
+            shadowColor: panel._styleColor("accent", panel.stateColor)
+            shadowOpacity: 0.18 + panel.voiceEnergy * 0.34
+            shadowBlur: 0.68 + panel.voiceEnergy * 0.22
+            shadowScale: 1.02 + panel.voiceEnergy * 0.055
+            blurMax: 64
+            opacity: panel.recordingVisual ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+        }
 
-    Item {
-        anchors.fill: parent
-        visible: !panel.customActive && panel._frameHaloEnabled() && !panel._isOrbLayout()
-        opacity: panel.recordingVisual ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        Item {
+            anchors.fill: parent
+            visible: !panel.customActive && panel._frameHaloEnabled() && !panel._isOrbLayout()
+            opacity: panel.recordingVisual ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+            Rectangle {
+                id: frameHalo
+                width: card.width + 3
+                height: card.height + 3
+                x: card.x - 1.5
+                y: card.y - 1.5
+                radius: card.radius + 1.5
+                color: "transparent"
+                border.color: panel._styleColor("accent", panel.stateColor)
+                border.width: 1 + panel.voiceEnergy * 1.4
+                opacity: 0.12 + panel.voiceEnergy * 0.28
+            }
+        }
+
+        // Soft dark backdrop behind the orb: a static radial gradient that
+        // only scales and fades with energy, so it never re-rasterizes.
+        Item {
+            id: orbBackdrop
+            visible: !panel.customActive && panel._isOrbLayout()
+            readonly property real maxOuter: card.width * 0.96
+            x: card.x + card.width / 2 - maxOuter
+            y: card.y + card.height / 2 + 8 - maxOuter
+            width: maxOuter * 2
+            height: maxOuter * 2
+            opacity: panel.recordingVisual ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+            Shape {
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+                opacity: 0.62 + panel.orbHaloEnergy * 0.16
+                scale: (0.84 + panel.orbHaloEnergy * 0.12) / 0.96
+                ShapePath {
+                    strokeColor: "transparent"
+                    fillGradient: RadialGradient {
+                        centerX: orbBackdrop.maxOuter; centerY: orbBackdrop.maxOuter
+                        centerRadius: orbBackdrop.maxOuter
+                        focalX: orbBackdrop.maxOuter; focalY: orbBackdrop.maxOuter
+                        focalRadius: orbBackdrop.maxOuter * 0.05
+                        GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.54) }
+                        GradientStop { position: 0.42; color: Qt.rgba(0, 0, 0, 0.58) }
+                        GradientStop { position: 0.74; color: Qt.rgba(0, 0, 0, 0.18) }
+                        GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.0) }
+                    }
+                    PathRectangle {
+                        width: orbBackdrop.width
+                        height: orbBackdrop.height
+                        radius: orbBackdrop.maxOuter
+                    }
+                }
+            }
+        }
+
+        // Orb halo: one soft accent glow hugging the orb's edge that swells
+        // and brightens with the voice. A static gradient, so energy changes
+        // only move a transform and an opacity.
+        Item {
+            id: orbGlow
+            visible: !panel.customActive && panel._isOrbLayout() && panel._frameHaloEnabled()
+            readonly property real outer: card.width * 0.92
+            readonly property real edge: (card.width / 2) / outer
+            x: card.x + card.width / 2 - outer
+            y: card.y + card.height / 2 - outer
+            width: outer * 2
+            height: outer * 2
+            opacity: panel.recordingVisual ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+            Shape {
+                id: glowShape
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+                readonly property color tint: panel._styleColor("accent", panel.stateColor)
+                opacity: 0.30 + panel.orbHaloEnergy * 0.70
+                scale: 0.90 + panel.orbHaloEnergy * 0.10
+                ShapePath {
+                    strokeColor: "transparent"
+                    fillGradient: RadialGradient {
+                        centerX: orbGlow.outer; centerY: orbGlow.outer; centerRadius: orbGlow.outer
+                        focalX: orbGlow.outer; focalY: orbGlow.outer
+                        GradientStop { position: 0.0; color: "transparent" }
+                        GradientStop { position: orbGlow.edge * 0.96; color: "transparent" }
+                        GradientStop { position: orbGlow.edge * 1.04; color: Qt.rgba(glowShape.tint.r, glowShape.tint.g, glowShape.tint.b, 0.42) }
+                        GradientStop { position: orbGlow.edge + (1 - orbGlow.edge) * 0.45; color: Qt.rgba(glowShape.tint.r, glowShape.tint.g, glowShape.tint.b, 0.12) }
+                        GradientStop { position: 1.0; color: "transparent" }
+                    }
+                    PathRectangle {
+                        width: orbGlow.width
+                        height: orbGlow.height
+                        radius: orbGlow.outer
+                    }
+                }
+            }
+        }
 
         Rectangle {
-            id: frameHalo
-            width: card.width + 3
-            height: card.height + 3
-            x: card.x - 1.5
-            y: card.y - 1.5
-            radius: card.radius + 1.5
-            color: "transparent"
-            border.color: panel._styleColor("accent", panel.stateColor)
-            border.width: 1 + panel.voiceEnergy * 1.4
-            opacity: 0.12 + panel.voiceEnergy * 0.28
-        }
-    }
+            id: card
+            visible: !panel.customActive
+            width: panel._cardWidth()
+            height: panel._cardHeight()
+            x: panel._cardX()
+            y: panel._cardY()
+            radius: panel._cardRadius()
+            color: panel._frameBackgroundColor()
+            border.width: panel._frameBorderWidth()
+            border.color: panel._frameBorderColor()
+            // Dim slightly between words. Smoothed on the renderer's tick: a
+            // Behavior here would animate on every VAD flip, several times a
+            // second, and keep the window redrawing at the display's full
+            // refresh rate.
+            opacity: (panel.recordingVisual && panel.audio && panel.audio.running)
+                     ? 0.78 + 0.22 * recipeRenderer.voiceActivity : 1.0
 
-    // Soft dark backdrop behind the orb: a static radial gradient that
-    // only scales and fades with energy, so it never re-rasterizes.
-    Item {
-        id: orbBackdrop
-        visible: !panel.customActive && panel._isOrbLayout()
-        readonly property real maxOuter: card.width * 0.96
-        x: card.x + card.width / 2 - maxOuter
-        y: card.y + card.height / 2 + 8 - maxOuter
-        width: maxOuter * 2
-        height: maxOuter * 2
-        opacity: panel.recordingVisual ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+            Row {
+                anchors.fill: parent
+                anchors.leftMargin: panel._isBlockLayout() ? 0 : VT.Theme.padding
+                anchors.rightMargin: panel._isBlockLayout() ? 0 : VT.Theme.padding
+                spacing: 10
 
-        Shape {
-            anchors.fill: parent
-            preferredRendererType: Shape.CurveRenderer
-            opacity: 0.62 + panel.orbHaloEnergy * 0.16
-            scale: (0.84 + panel.orbHaloEnergy * 0.12) / 0.96
-            ShapePath {
-                strokeColor: "transparent"
-                fillGradient: RadialGradient {
-                    centerX: orbBackdrop.maxOuter; centerY: orbBackdrop.maxOuter
-                    centerRadius: orbBackdrop.maxOuter
-                    focalX: orbBackdrop.maxOuter; focalY: orbBackdrop.maxOuter
-                    focalRadius: orbBackdrop.maxOuter * 0.05
-                    GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.54) }
-                    GradientStop { position: 0.42; color: Qt.rgba(0, 0, 0, 0.58) }
-                    GradientStop { position: 0.74; color: Qt.rgba(0, 0, 0, 0.18) }
-                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.0) }
+                // Lifted toward the foreground: some theme palettes map the
+                // state roles to dark, low-contrast colors.
+                VT.StateIcon {
+                    visible: !panel._isBlockLayout()
+                    width: 28
+                    height: 22
+                    anchors.verticalCenter: parent.verticalCenter
+                    daemonState: panel.shownState
+                    phase: recipeRenderer.phase
+                    color: Qt.tint(panel.stateColor, Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), 0.5))
                 }
-                PathRectangle {
-                    width: orbBackdrop.width
-                    height: orbBackdrop.height
-                    radius: orbBackdrop.maxOuter
-                }
-            }
-        }
-    }
 
-    // Orb halo: one soft accent glow hugging the orb's edge that swells
-    // and brightens with the voice. A static gradient, so energy changes
-    // only move a transform and an opacity.
-    Item {
-        id: orbGlow
-        visible: !panel.customActive && panel._isOrbLayout() && panel._frameHaloEnabled()
-        readonly property real outer: card.width * 0.92
-        readonly property real edge: (card.width / 2) / outer
-        x: card.x + card.width / 2 - outer
-        y: card.y + card.height / 2 - outer
-        width: outer * 2
-        height: outer * 2
-        opacity: panel.recordingVisual ? 1.0 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                Column {
+                    width: panel._isBlockLayout()
+                        ? card.width
+                        : card.width - 28 - 2 * VT.Theme.padding - 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 4
 
-        Shape {
-            id: glowShape
-            anchors.fill: parent
-            preferredRendererType: Shape.CurveRenderer
-            readonly property color tint: panel._styleColor("accent", panel.stateColor)
-            opacity: 0.30 + panel.orbHaloEnergy * 0.70
-            scale: 0.90 + panel.orbHaloEnergy * 0.10
-            ShapePath {
-                strokeColor: "transparent"
-                fillGradient: RadialGradient {
-                    centerX: orbGlow.outer; centerY: orbGlow.outer; centerRadius: orbGlow.outer
-                    focalX: orbGlow.outer; focalY: orbGlow.outer
-                    GradientStop { position: 0.0; color: "transparent" }
-                    GradientStop { position: orbGlow.edge * 0.96; color: "transparent" }
-                    GradientStop { position: orbGlow.edge * 1.04; color: Qt.rgba(glowShape.tint.r, glowShape.tint.g, glowShape.tint.b, 0.42) }
-                    GradientStop { position: orbGlow.edge + (1 - orbGlow.edge) * 0.45; color: Qt.rgba(glowShape.tint.r, glowShape.tint.g, glowShape.tint.b, 0.12) }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
-                PathRectangle {
-                    width: orbGlow.width
-                    height: orbGlow.height
-                    radius: orbGlow.outer
-                }
-            }
-        }
-    }
+                    Item {
+                        width: parent.width
+                        height: panel._isBlockLayout()
+                            ? card.height
+                            : Math.max(24, card.height - 2 * VT.Theme.padding)
 
-    Rectangle {
-        id: card
-        visible: !panel.customActive
-        width: panel._cardWidth()
-        height: panel._cardHeight()
-        x: panel._cardX()
-        y: panel._cardY()
-        radius: panel._cardRadius()
-        color: panel._frameBackgroundColor()
-        border.width: panel._frameBorderWidth()
-        border.color: panel._frameBorderColor()
-        // Dim slightly between words. Smoothed on the renderer's tick: a
-        // Behavior here would animate on every VAD flip, several times a
-        // second, and keep the window redrawing at the display's full
-        // refresh rate.
-        opacity: (panel.recordingVisual && panel.audio && panel.audio.running)
-                 ? 0.78 + 0.22 * recipeRenderer.voiceActivity : 1.0
-
-        Row {
-            anchors.fill: parent
-            anchors.leftMargin: panel._isBlockLayout() ? 0 : VT.Theme.padding
-            anchors.rightMargin: panel._isBlockLayout() ? 0 : VT.Theme.padding
-            spacing: 10
-
-            // Lifted toward the foreground: some theme palettes map the
-            // state roles to dark, low-contrast colors.
-            VT.StateIcon {
-                visible: !panel._isBlockLayout()
-                width: 28
-                height: 22
-                anchors.verticalCenter: parent.verticalCenter
-                daemonState: panel.daemonState
-                phase: recipeRenderer.phase
-                color: Qt.tint(panel.stateColor, Qt.alpha(panel._styleColor("foreground", VT.Theme.textColor), 0.5))
-            }
-
-            Column {
-                width: panel._isBlockLayout()
-                    ? card.width
-                    : card.width - 28 - 2 * VT.Theme.padding - 10
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 4
-
-                Item {
-                    width: parent.width
-                    height: panel._isBlockLayout()
-                        ? card.height
-                        : Math.max(24, card.height - 2 * VT.Theme.padding)
-
-                    VT.RecipeRenderer {
-                        id: recipeRenderer
-                        anchors.fill: parent
-                        // Items inside a hidden PanelWindow still report
-                        // visible, so the renderer can't see a --no-osd
-                        // hide on its own.
-                        active: panel.visible
-                        style: panel.style
-                        meter: panel._meter
-                        daemonState: panel.daemonState
-                        waveformColumns: panel.waveformColumns
-                        waveformGain: VT.Theme.waveformGain
-                        meterFloorDbfs: VT.Theme.meterFloorDbfs
+                        VT.RecipeRenderer {
+                            id: recipeRenderer
+                            anchors.fill: parent
+                            // Items inside a hidden PanelWindow still report
+                            // visible, so the renderer can't see a --no-osd
+                            // hide on its own.
+                            active: panel.visible
+                            style: panel.style
+                            meter: panel._meter
+                            daemonState: panel.shownState
+                            waveformColumns: panel.waveformColumns
+                            waveformGain: VT.Theme.waveformGain
+                            meterFloorDbfs: VT.Theme.meterFloorDbfs
+                        }
                     }
                 }
             }
