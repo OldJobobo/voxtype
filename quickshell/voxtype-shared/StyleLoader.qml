@@ -43,7 +43,11 @@ QtObject {
                 "recording": "#F2594D",
                 "streaming": "#66C7FF",
                 "transcribing": "#F2CC4D",
-                "idle": "rgba(235, 235, 242, 0.750)"
+                "idle": "rgba(235, 235, 242, 0.750)",
+                "grid": "rgba(102, 199, 255, 0.200)",
+                "glow": "rgba(102, 199, 255, 0.360)",
+                "core": "rgba(235, 235, 242, 0.960)",
+                "amber": "#F2CC4D"
             },
             "frame": {
                 "background": "background",

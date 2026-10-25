@@ -411,6 +411,16 @@ fn semantic_colors(p: Palette) -> BTreeMap<String, String> {
         "idle".to_string(),
         color_to_css(p.foreground.with_alpha(0.75)),
     );
+    // Custom packages use these decorative roles too. Derive them from
+    // the selected palette so forcing Omarchy never leaves cyan/amber
+    // package fallbacks behind (notably Aegis's grid and glow).
+    colors.insert("grid".to_string(), color_to_css(p.accent.with_alpha(0.20)));
+    colors.insert("glow".to_string(), color_to_css(p.accent.with_alpha(0.36)));
+    colors.insert(
+        "core".to_string(),
+        color_to_css(p.foreground.with_alpha(0.96)),
+    );
+    colors.insert("amber".to_string(), color_to_css(p.meter_mid));
     colors
 }
 
@@ -439,6 +449,30 @@ mod tests {
         assert!(style.package_dir.is_none());
         assert!(style.custom_qml.is_none());
         assert!(style.colors.contains_key("accent"));
+    }
+
+    #[test]
+    fn decorative_package_roles_follow_the_selected_palette() {
+        let palette = Palette {
+            accent: Color::rgb(0.25, 0.5, 0.75),
+            foreground: Color::rgb(0.8, 0.7, 0.6),
+            meter_mid: Color::rgb(0.7, 0.4, 0.9),
+            ..Palette::fallback()
+        };
+        let colors = semantic_colors(palette);
+        assert_eq!(
+            colors["grid"],
+            color_to_css(palette.accent.with_alpha(0.20))
+        );
+        assert_eq!(
+            colors["glow"],
+            color_to_css(palette.accent.with_alpha(0.36))
+        );
+        assert_eq!(
+            colors["core"],
+            color_to_css(palette.foreground.with_alpha(0.96))
+        );
+        assert_eq!(colors["amber"], colors["warning"]);
     }
 
     #[test]
