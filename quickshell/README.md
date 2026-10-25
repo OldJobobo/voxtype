@@ -151,8 +151,8 @@ gain = 1.2
 mirror = true
 ```
 
-Layer types are `shadow`, `background`, `waveform`, `bars`, `pulse`, `ring`,
-`meter`, `icon`, and `label`.
+Layer types are `shadow`, `background`, `waveform`, `line`, `bars`, `dots`,
+`pulse`, `ring`, `meter`, `icon`, and `label`.
 
 `waveform` and `bars` place peak levels on a decibel scale: -52 dBFS (room
 noise) is empty and -6 dBFS is full height, and each column shows the
@@ -167,8 +167,13 @@ rewrites the resolved style when the theme changes and `StyleLoader` reloads
 it without a restart. (The GTK4 frontend picks a new theme up on restart.)
 
 `layout` controls the host frame, not just the animation area. `compact`,
-`wide`, and `minimal` are strip layouts; `tile` is a square card; `orb` is a
-circular frame for ring-focused recipes. In `tile` and `orb` the elapsed
+`wide`, `minimal`, `pill`, and `shell` are strip layouts; `tile` is a square
+card; `orb` is a circular frame for ring-focused recipes. `shell` follows
+Omarchy's live Hyprland rounding, popup border (including gradient stops),
+monospace font, and spacing scale, with a steady 97% theme-background fill.
+It reads the theme's `shell.toml` and optional user shell overrides without
+importing Omarchy's QML modules. The `shell-line` recipe is Capsule's voice
+line in this frame. In `tile` and `orb` the elapsed
 time, the result message, and the model chip sit just outside the card.
 
 `[osd.frame]` controls the host card around the rendered recipe. Use
@@ -196,6 +201,17 @@ it declares:
 
 The host re-syncs these when the daemon state, session, or outcome changes,
 and when the style reloads (for example on an Omarchy theme switch).
+
+## Testing shell chrome
+
+```bash
+cargo test --lib osd::
+bash tests/quickshell-shell-style.sh
+```
+
+The QML checks run in a headless `qs` instance with isolated runtime/cache
+files under `target/`, not the user's running OSD. Quickshell's types need
+`qs`; the plain Qt `qmltestrunner` is not a substitute.
 
 ## Not covered
 

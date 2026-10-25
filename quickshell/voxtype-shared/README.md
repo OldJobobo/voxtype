@@ -94,9 +94,18 @@ Public properties and helpers:
 
 | Property / function | Purpose |
 |---------------------|---------|
-| `config`            | Parsed runtime style object |
+| `config`            | Parsed runtime style object; `config.shell` holds resolved shell chrome only for the `shell` layout |
+| `shellCornerRadius` | Effective Hyprland rounding for the shell layout; zero without Hyprland |
 | `color(role, fallback)` | Resolve semantic tokens or literal colors |
 | `customQmlUrl()`    | `file://` URL for an explicitly selected trusted QML package entry |
+
+### `ShellMetrics` and `ShellBorder`
+
+`ShellMetrics` queries Hyprland rounding on activation and config reload,
+without polling or starting processes for other layouts. `ShellBorder`
+draws a static rounded edge with the resolved popup gradient, alpha, and
+uniform thickness. Neither imports Omarchy's shell modules. TOML tokens and
+aliases are resolved in Rust (`src/osd/shell_style.rs`).
 
 ### `RecipeRenderer`
 
@@ -106,8 +115,8 @@ rather than strokes on a software Canvas, so the GPU does the drawing. One
 animation tick (about 60 Hz, running only while `active` and not idle)
 reads the newest audio values, smooths them, and updates every layer.
 
-Layer types are `shadow`, `background`, `waveform`, `bars`, `pulse`, `ring`,
-`meter`, `icon`, and `label`. Colors are semantic roles by default (`accent`,
+Layer types are `shadow`, `background`, `waveform`, `line`, `bars`, `dots`,
+`pulse`, `ring`, `meter`, `icon`, and `label`. Colors are semantic roles by default (`accent`,
 `background`, `foreground`, `success`, `warning`, `error`) and normally
 come from the active Omarchy theme. `waveform` and `bars` map peaks onto a
 -52..-6 dBFS scale, taking the loudest sample in each column. While

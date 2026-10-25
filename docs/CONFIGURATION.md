@@ -3905,7 +3905,7 @@ voxtype config schema          # lists every settable key
 frontend = "quickshell"
 style = "default"      # Built-in style, package name, or package path
 # palette = "omarchy" # omit for auto, or use omarchy, fallback, package, custom
-layout = "compact"    # compact, wide, minimal, pill, tile, orb, custom
+layout = "compact"    # compact, wide, minimal, pill, shell, tile, orb, custom
 
 # Explicit trusted package path. Custom QML is not sandboxed.
 # plugin_path = "~/.config/voxtype/osd/my-style"
@@ -3939,6 +3939,9 @@ recipe colors such as `accent`, `background`,
 `foreground`, `success`, `warning`, and `error` resolve from the active
 Omarchy theme at `~/.config/omarchy/current/theme/colors.toml`. Literal colors
 such as `"#ff6600"` are allowed when a recipe needs to override the theme.
+Decorative package roles follow the same palette: `grid` and `glow` are
+translucent accent, `core` is translucent foreground, and `amber` follows
+`warning` (which need not be yellow in the selected theme).
 
 With the Quickshell frontend, Omarchy theme switches apply live: the launcher
 watches the active theme and rewrites the resolved style, and the OSD picks up
@@ -3970,10 +3973,21 @@ The center dot shows the current level and the outer dots lag slightly
 behind, so each syllable ripples outward. While transcribing, the line
 shimmers and the dots bounce in turn.
 
-`layout` controls the outer OSD frame. `compact`, `wide`, `minimal`, and
-`pill` are strip layouts; `pill` is a short capsule with fully rounded ends.
-`tile` is a square card; `orb` is a circular frame intended for ring-focused
-recipes.
+`layout` controls the outer OSD frame. `compact`, `wide`, `minimal`, `pill`,
+and `shell` are strip layouts; `pill` is a short capsule with fully rounded
+ends. `tile` is a square card; `orb` is a circular frame intended for
+ring-focused recipes.
+
+`shell` keeps a compact strip but follows Omarchy Shell's chrome: live
+Hyprland `decoration:rounding`, popup border colors/gradient, border alpha
+and uniform width, monospace text, and font-scaled spacing. It reads
+`[popups]` border/text, `[font] base-size`, and `[spacing]` scale tokens
+from the active theme's `shell.toml`, overlaid by
+`~/.config/omarchy/shell.toml`. Like Omarchy's own OSD, its theme-background
+fill stays at 97% opacity instead of dimming between words. Missing tokens
+use shell defaults and the active palette; without Hyprland, corners are
+square. This is opt-in and leaves all other layouts unchanged. The
+`shell-line` recipe pairs it with Capsule's flowing voice strands.
 
 `[osd.frame]` controls the host frame around the recipe. Set
 `background = "none"` or `border = "none"` for frameless recipes; the visual
@@ -3982,9 +3996,10 @@ in the theme's accent and state colors, with a soft glow, that turns slowly
 while listening, speeds up and brightens with your voice, and spins while
 transcribing.
 
-The shipped recipes include three minimal styles built on these: `capsule`
-(a pill with a voice line), `aura` (a pill with an aura edge and dots), and
-`halo` (a round badge with an aura edge and a voice line). Apply one with
+The shipped recipes include four minimal styles built on these: `capsule`
+(a pill with a voice line), `shell-line` (the same line in shell chrome),
+`aura` (a pill with an aura edge and dots), and `halo` (a round badge with
+an aura edge and a voice line). Apply one with
 `voxtype setup osd --recipe capsule`.
 
 Around the recipe, the built-in Quickshell HUD also shows:

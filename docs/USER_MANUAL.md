@@ -315,7 +315,7 @@ Quickshell also supports OSD customization through `[osd]`:
 frontend = "quickshell"
 style = "default"      # built-in style, package name, or package path
 # palette = "omarchy" # omit for auto, or force active Omarchy theme colors
-layout = "compact"    # compact, wide, minimal, tile, orb, custom
+layout = "compact"    # compact, wide, minimal, pill, shell, tile, orb, custom
 
 [osd.frame]
 background = "none"   # semantic role, literal color, or none
@@ -328,7 +328,7 @@ layers such as `shadow`, `pulse`, `bars`, `waveform`, `ring`, `meter`, `icon`,
 and `label`. Colors are
 semantic Omarchy tokens by default (`accent`, `background`, `foreground`,
 `success`, `warning`, `error`). `layout` changes the outer frame: strip-style
-layouts use `compact`, `wide`, or `minimal`, while `tile` and `orb` create
+layouts use `compact`, `wide`, `minimal`, `pill`, or `shell`, while `tile` and `orb` create
 non-strip OSD frames. `[osd.frame]` can remove or recolor the host background
 and border without changing QML. The styling system was contributed by
 [OldJobobo](https://github.com/OldJobobo)
@@ -348,8 +348,12 @@ with `voxtype setup osd --recipe <name>`, which writes its keys into your
 config without duplicating any that are already there and prints each
 changed key with its previous value; `--dry-run` previews the change and
 `voxtype setup osd --list` shows what's installed. For a quiet HUD, the
-`capsule`, `aura`, and `halo` recipes show only the state, your live voice
-level, and the clock; the `showcase-*` recipes layer more instruments.
+`capsule`, `shell-line`, `aura`, and `halo` recipes show only the state,
+your live voice level, and the clock; the `showcase-*` recipes layer more
+instruments. `shell-line` keeps Capsule's flowing lines but follows Omarchy
+Shell's corner rounding, popup border, monospace text, and spacing instead
+of the fully rounded pill shape. Its theme background stays steady, with
+no glow or dimming between words.
 Recipes resolve against
 `~/.config/voxtype/osd-recipes/`, `~/.local/share/voxtype/osd-recipes/`, and
 `/usr/share/voxtype/osd-recipes/`, and `--recipe` also accepts a path to a
