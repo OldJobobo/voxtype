@@ -13,11 +13,13 @@
 //! - [`config`] — `[osd]` config block (`OsdConfig`).
 //! - [`theme`] — Omarchy theme parsing + change watcher.
 //! - [`gtk_env`] — environment workarounds for GTK4 bugs (GTK frontend only).
+//! - [`session`] — runtime files describing the session in flight, for OSDs.
 
 pub mod config;
 pub mod gtk_env;
 pub mod ipc;
 pub mod recipe;
+pub mod session;
 pub mod style;
 pub mod supervisor;
 pub mod theme;
