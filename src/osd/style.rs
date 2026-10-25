@@ -536,6 +536,36 @@ mod tests {
     }
 
     #[test]
+    fn shell_dots_package_matches_the_recipe() {
+        #[derive(serde::Deserialize)]
+        struct Recipe {
+            osd: OsdConfig,
+        }
+        let recipe: Recipe =
+            toml::from_str(include_str!("../../examples/osd-recipes/shell-dots.toml")).unwrap();
+        let package =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/osd-packages/shell-dots");
+        let cfg = OsdConfig {
+            plugin_path: Some(package),
+            ..OsdConfig::default()
+        };
+        let style = resolve_runtime_style(&cfg, None).unwrap();
+        assert_eq!(style.layout, OsdLayout::Shell);
+        assert_eq!(style.palette, OsdPaletteSource::Omarchy);
+        assert!(style.shell.is_some());
+        assert!(style.custom_qml.is_none());
+        assert_eq!(style.visual.layers[0].kind, OsdLayerKind::Dots);
+        assert_eq!(
+            serde_json::to_value(style.frame).unwrap(),
+            serde_json::to_value(recipe.osd.frame).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(style.visual).unwrap(),
+            serde_json::to_value(recipe.osd.visual).unwrap()
+        );
+    }
+
+    #[test]
     fn explicit_package_manifest_can_supply_qml_and_visual() {
         let tmp = tempdir().unwrap();
         fs::write(

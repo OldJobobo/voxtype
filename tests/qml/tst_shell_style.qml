@@ -15,6 +15,13 @@ ShellRoot {
 
     VT.ShellMetrics { id: metrics; enabled: false }
     VT.StyleLoader { id: style }
+    VT.RecipeRenderer {
+        id: renderer
+        width: 184
+        height: 28
+        style: style
+        active: false
+    }
     VT.ShellBorder {
         id: edge
         width: 320
@@ -60,6 +67,12 @@ ShellRoot {
                 style._shellMetrics.applyRounding('{"int":0}');
                 tests.check(style.shellCornerRadius === 0, "Square rounding propagates without a restart");
                 tests.check(style.color("#ff739fd2") === "#ff739fd2", "Resolved border colors retain Qt alpha ordering");
+                style.config = { layout: "shell", visual: { layers: [
+                    { type: "dots", source: "peak", color: "accent", secondary_color: "foreground", order: 10 }
+                ] } };
+                tests.check(renderer._wantsDots && !renderer._wantsLine, "Shell Dots selects the existing dots renderer");
+                tests.check(renderer._sortedLayers.length === 1, "Shell Dots does not add waveform or meter layers");
+                tests.check(renderer._sortedLayers[0].secondary_color === "foreground", "Dots retain semantic theme roles");
                 style.config = style._defaultConfig();
                 tests.check(style.config.layout === "compact", "Existing default layout is unchanged");
                 console.info("SHELL_STYLE_PASS " + tests.passed + " checks");

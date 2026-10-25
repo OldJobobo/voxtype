@@ -540,7 +540,7 @@ mod tests {
             );
             seen += 1;
         }
-        assert!(seen >= 8, "expected the shipped recipes, found {seen}");
+        assert!(seen >= 9, "expected the shipped recipes, found {seen}");
         let pill: Recipe =
             toml::from_str(&std::fs::read_to_string(dir.join("capsule.toml")).unwrap()).unwrap();
         assert_eq!(pill.osd.layout, OsdLayout::Pill);
@@ -563,6 +563,30 @@ mod tests {
         assert_eq!(
             serde_json::to_value(shell.osd.visual).unwrap(),
             serde_json::to_value(capsule.osd.visual).unwrap(),
+        );
+    }
+
+    #[test]
+    fn shell_dots_keeps_aura_dots_with_the_shell_line_frame() {
+        #[derive(Deserialize)]
+        struct Recipe {
+            osd: OsdConfig,
+        }
+        let dots: Recipe =
+            toml::from_str(include_str!("../../examples/osd-recipes/shell-dots.toml")).unwrap();
+        let aura: Recipe =
+            toml::from_str(include_str!("../../examples/osd-recipes/aura.toml")).unwrap();
+        let line: Recipe =
+            toml::from_str(include_str!("../../examples/osd-recipes/shell-line.toml")).unwrap();
+        assert_eq!(dots.osd.layout, OsdLayout::Shell);
+        assert_eq!(dots.osd.palette, Some(OsdPaletteSource::Omarchy));
+        assert_eq!(
+            serde_json::to_value(dots.osd.frame).unwrap(),
+            serde_json::to_value(line.osd.frame).unwrap(),
+        );
+        assert_eq!(
+            serde_json::to_value(dots.osd.visual).unwrap(),
+            serde_json::to_value(aura.osd.visual).unwrap(),
         );
     }
 
